@@ -1,1 +1,39 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+/build
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+
+# env (keep the example)
+.env*
+!.env.example
+
+# deploy / scratch
+.vercel
+results/raw/
+ui-prototypes/
+mockups/
+design-ref/
+variants/
 .superpowers/
+docs/superpowers/
+.claude/
+*-internal/
+.remember/
+SHIP-STATE.md
+BRIEF.md
