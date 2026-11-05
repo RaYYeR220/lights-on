@@ -1,0 +1,152 @@
+import {
+  pgTable, serial, text, integer, boolean, jsonb, timestamp, date, numeric, uniqueIndex, index, primaryKey, check,
+} from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import type { EvidenceBundle, Step } from '@/lib/types';
+
+export const SOURCES = ['vibestarter', 'vibeathon01', 'base', 'community'] as const;
+export const STATUSES = ['shipped', 'building', 'quiet', 'down', 'unavailable'] as const;
+export const SHIFT_KINDS = ['nightly', 'live', 'backfill'] as const;
+const CHANNELS = ['telegram', 'webpush'] as const;
+
+export interface ContractRef { chainId: number; address: string; role: string }
+export interface TokenRef { chainId: number; address: string; symbol: string }
+export interface VibestarterRef { campaignId: string; escrow: string; founderWallet: string }
+
+const tsz = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
+const inList = (col: string, xs: readonly string[]) =>
+  sql.raw(`${col} in (${xs.map((x) => `'${x}'`).join(', ')})`);
+
+export const projects = pgTable('projects', {
+  id: serial('id').primaryKey(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  tagline: text('tagline'),
+  category: text('category'),
+  source: text('source', { enum: SOURCES }).notNull(),
+  liveUrl: text('live_url'),
+  repoHost: text('repo_host', { enum: ['github', 'gitlab'] }),
+  repo: text('repo'),
+  defaultBranch: text('default_branch'),
+  contracts: jsonb('contracts').$type<ContractRef[]>(),
+  token: jsonb('token').$type<TokenRef>(),
+  vibestarter: jsonb('vibestarter').$type<VibestarterRef>(),
+  claimedBy: text('claimed_by'),
+  claimVerifiedAt: tsz('claim_verified_at'),
+  addedBy: text('added_by'),
+  createdAt: tsz('created_at').notNull().defaultNow(),
+  hidden: boolean('hidden').notNull().default(false),
+}, () => [check('projects_source_chk', inList('source', SOURCES))]);
+
+export const shifts = pgTable('shifts', {
+  id: serial('id').primaryKey(),
+  kind: text('kind', { enum: SHIFT_KINDS }).notNull(),
+  night: date('night', { mode: 'string' }).notNull(),
+  startedAt: tsz('started_at').notNull().defaultNow(),
+  finishedAt: tsz('finished_at'),
+  planned: integer('planned').notNull().default(0),
+  done: integer('done').notNull().default(0),
+  attestTx: text('attest_tx'),
+  gasUsed: numeric('gas_used', { mode: 'string' }),
+  status: text('status').notNull().default('running'),
+}, (t) => [
+  check('shifts_kind_chk', inList('kind', SHIFT_KINDS)),
+  uniqueIndex('shifts_nightly_night_uq').on(t.kind, t.night).where(sql`${t.kind} = 'nightly'`),
+]);
+
+export const nights = pgTable('nights', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  night: date('night', { mode: 'string' }).notNull(),
+  shiftId: integer('shift_id').references(() => shifts.id),
+  status: text('status', { enum: STATUSES }).notNull(),
+  observed: boolean('observed').notNull().default(true),
+  signals: jsonb('signals').$type<Record<string, unknown>>(),
+  summary: text('summary'),
+  notable: jsonb('notable').$type<unknown[]>(),
+  evidenceHash: text('evidence_hash'),
+  attestationUid: text('attestation_uid'),
+  attestClaimedAt: tsz('attest_claimed_at'),
+  aiModel: text('ai_model'),
+  aiOk: boolean('ai_ok').notNull().default(false),
+  createdAt: tsz('created_at').notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('nights_project_night_observed_uq').on(t.projectId, t.night, t.observed),
+  index('nights_night_idx').on(t.night),
+  check('nights_status_chk', inList('status', STATUSES)),
+]);
+
+export const liveRuns = pgTable('live_runs', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  startedAt: tsz('started_at').notNull().defaultNow(),
+  steps: jsonb('steps').$type<Step[]>().notNull().default([]),
+  status: text('status').notNull().default('running'),
+  evidenceHash: text('evidence_hash'),
+  attestationUid: text('attestation_uid'),
+  tx: text('tx'),
+  requesterIpHash: text('requester_ip_hash'),
+}, (t) => [index('live_runs_project_idx').on(t.projectId, t.startedAt)]);
+
+export const snapshots = pgTable('snapshots', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  adapter: text('adapter').notNull(),
+  takenAt: tsz('taken_at').notNull().defaultNow(),
+  fingerprint: text('fingerprint'),
+  data: jsonb('data').$type<unknown>(),
+}, (t) => [index('snapshots_project_adapter_idx').on(t.projectId, t.adapter, t.takenAt)]);
+
+export const evidence = pgTable('evidence', {
+  hash: text('hash').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  night: date('night', { mode: 'string' }).notNull(),
+  bundle: jsonb('bundle').$type<EvidenceBundle>().notNull(),
+});
+
+export const trancheEvents = pgTable('tranche_events', {
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  trancheIndex: integer('tranche_index').notNull(),
+  requestedAt: tsz('requested_at'),
+  windowEndsAt: tsz('window_ends_at'),
+  amountWei: numeric('amount_wei', { mode: 'string' }),
+  tx: text('tx'),
+  alerted: boolean('alerted').notNull().default(false),
+}, (t) => [primaryKey({ columns: [t.projectId, t.trancheIndex] })]);
+
+export const subscriptions = pgTable('subscriptions', {
+  id: serial('id').primaryKey(),
+  channel: text('channel', { enum: CHANNELS }).notNull(),
+  target: text('target').notNull(),
+  addresses: text('addresses').array().notNull().default(sql`'{}'::text[]`),
+  projectIds: integer('project_ids').array().notNull().default(sql`'{}'::integer[]`),
+  createdAt: tsz('created_at').notNull().defaultNow(),
+  lastSentAt: tsz('last_sent_at'),
+}, () => [check('subscriptions_channel_chk', inList('channel', CHANNELS))]);
+
+export const founderNotes = pgTable('founder_notes', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  night: date('night', { mode: 'string' }).notNull(),
+  note: text('note').notNull(),
+  author: text('author').notNull(),
+  signature: text('signature').notNull(),
+  createdAt: tsz('created_at').notNull().defaultNow(),
+});
+
+export const budget = pgTable('budget', {
+  day: date('day', { mode: 'string' }).primaryKey(),
+  llmTokens: numeric('llm_tokens', { mode: 'string' }).notNull().default('0'),
+  gasWei: numeric('gas_wei', { mode: 'string' }).notNull().default('0'),
+  liveRuns: numeric('live_runs', { mode: 'string' }).notNull().default('0'),
+  githubCalls: numeric('github_calls', { mode: 'string' }).notNull().default('0'),
+});
+
+export type ProjectRow = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
+export type NightRow = typeof nights.$inferSelect;
+export type NewNight = typeof nights.$inferInsert;
+export type LiveRunRow = typeof liveRuns.$inferSelect;
+export type NewLiveRun = typeof liveRuns.$inferInsert;
+export type ShiftRow = typeof shifts.$inferSelect;
+export type SnapshotRow = typeof snapshots.$inferSelect;
