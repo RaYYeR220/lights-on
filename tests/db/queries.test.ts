@@ -75,3 +75,11 @@ describe('db queries', () => {
     expect((await getLastSnapshot(db, p.id, 'liveapp'))?.fingerprint).toBe('f2');
   });
 });
+
+describe('getDb', () => {
+  it('two concurrent getDb() calls with pglite://memory resolve to the same instance', async () => {
+    const { getDb } = await import('@/lib/db');
+    const [a, b] = await Promise.all([getDb('pglite://memory'), getDb('pglite://memory')]);
+    expect(a).toBe(b);
+  });
+});

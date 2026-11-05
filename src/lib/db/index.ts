@@ -8,27 +8,31 @@ import * as schema from './schema';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Db = PgDatabase<any, typeof schema>;
 
-let cached: { url: string; db: Db } | undefined;
+let cached: { url: string; p: Promise<Db> } | undefined;
 
-/** Neon HTTP in prod; pglite when the URL starts with `pglite://` (`pglite://memory` = in-memory). */
-export async function getDb(url: string = process.env.DATABASE_URL ?? ''): Promise<Db> {
-  if (cached && cached.url === url) return cached.db;
-  let db: Db;
+async function build(url: string): Promise<Db> {
   if (url.startsWith('pglite://')) {
     const [{ PGlite }, { drizzle }] = await Promise.all([
       import('@electric-sql/pglite'),
       import('drizzle-orm/pglite'),
     ]);
     const dir = url.slice('pglite://'.length);
-    db = drizzle(dir && dir !== 'memory' ? new PGlite(dir) : new PGlite(), { schema }) as unknown as Db;
-  } else {
-    if (!url) throw new Error('DATABASE_URL is not set');
-    const [{ neon }, { drizzle }] = await Promise.all([
-      import('@neondatabase/serverless'),
-      import('drizzle-orm/neon-http'),
-    ]);
-    db = drizzle(neon(url), { schema }) as unknown as Db;
+    return drizzle(dir && dir !== 'memory' ? new PGlite(dir) : new PGlite(), { schema }) as unknown as Db;
   }
-  cached = { url, db };
-  return db;
+  if (!url) throw new Error('DATABASE_URL is not set');
+  const [{ neon }, { drizzle }] = await Promise.all([
+    import('@neondatabase/serverless'),
+    import('drizzle-orm/neon-http'),
+  ]);
+  return drizzle(neon(url), { schema }) as unknown as Db;
+}
+
+/** Neon HTTP in prod; pglite when the URL starts with `pglite://` (`pglite://memory` = in-memory). */
+export function getDb(url: string = process.env.DATABASE_URL ?? ''): Promise<Db> {
+  if (cached && cached.url === url) return cached.p;
+  const entry = { url, p: build(url) };
+  cached = entry;
+  // On failure drop the cache so the next call retries.
+  entry.p.catch(() => { if (cached === entry) cached = undefined; });
+  return entry.p;
 }
