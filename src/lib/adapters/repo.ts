@@ -12,6 +12,17 @@ function resolve(deps: RepoDeps): ResolvedDeps {
   return { fetch, budget: deps.budget ?? (async () => true), token: deps.token, prevEtag: deps.prevEtag };
 }
 
+const SEGMENT = /^[A-Za-z0-9_.-]{1,100}$/;
+
+/** GitHub: exactly owner/name. GitLab: 2-5 segments (nested groups). No `.`/`..` segments. Segments are URL-safe by construction. */
+export function validRepo(ref: RepoRef): boolean {
+  if (typeof ref.repo !== 'string') return false;
+  const parts = ref.repo.split('/');
+  const max = ref.host === 'gitlab' ? 5 : 2;
+  if (parts.length < 2 || parts.length > max) return false;
+  return parts.every((p) => SEGMENT.test(p) && p !== '.' && p !== '..');
+}
+
 /** Like checkRepo, but also returns the ETag to store for the next night's conditional meta request. */
 export async function checkRepoDetailed(
   ref: RepoRef,
@@ -19,6 +30,9 @@ export async function checkRepoDetailed(
   prevHeadSha: string | null,
   deps: RepoDeps = {},
 ): Promise<{ result: AdapterResult<RepoFacts>; etag: string | null }> {
+  if (!validRepo(ref)) {
+    return { result: { source: 'repo', tier: 'verified', ok: false, facts: null, error: 'invalid_repo' }, etag: deps.prevEtag ?? null };
+  }
   try {
     const d = resolve(deps);
     if (ref.host === 'gitlab') return { result: await checkGitlab(ref, window, prevHeadSha, d), etag: null };

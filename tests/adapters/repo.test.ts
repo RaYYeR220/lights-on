@@ -80,6 +80,27 @@ describe('github api path', () => {
     expect(d.result.ok).toBe(true);
   });
 
+  it('total_commits 150 with 100 returned -> since fallback, degraded, headSha newest', async () => {
+    const cmp = json('github/compare.json');
+    cmp.total_commits = 150;
+    const newestFirst = json('github/compare.json').commits.reverse();
+    const m = mock(ghRoutes([[/\/compare\//, () => res(JSON.stringify(cmp))], [/\/commits\?/, () => res(JSON.stringify(newestFirst))]]));
+    const r = await checkRepo(REF, WIN, PREV, { fetch: m.fetch, token: 't', budget: budgetAlways });
+    expect(r.degraded).toBe(true);
+    expect(m.urls().some((u) => /\/commits\?sha=main/.test(u))).toBe(true);
+    expect(r.facts!.headSha).toBe('cccc000000000000000000000000000000000003');
+    for (const c of r.facts!.commits) expect(c.files).toBeNull();
+  });
+
+  it('files length 300 all-cosmetic -> aggregate not applied', async () => {
+    const cmp = json('github/compare-docs-only.json');
+    cmp.files = Array.from({ length: 300 }, (_, i) => ({ filename: `docs/p${i}.md`, additions: 1, deletions: 0 }));
+    const m = mock(ghRoutes([[/\/compare\//, () => res(JSON.stringify(cmp))], [/\/commits\?/, () => res(JSON.stringify(cmp.commits.slice().reverse()))]]));
+    const r = await checkRepo(REF, WIN, PREV, { fetch: m.fetch, token: 't', budget: budgetAlways });
+    expect(r.degraded).toBe(true);
+    expect(r.facts!.commits.map((c) => c.kind)).toEqual(['code', 'code']); // message-based, not cosmetic aggregate
+  });
+
   it('bot commits flagged; multi-commit with mixed files keeps message-based kind', async () => {
     const m = mock(ghRoutes());
     const r = await checkRepo(REF, WIN, PREV, { fetch: m.fetch, token: 't', budget: budgetAlways });
@@ -94,6 +115,7 @@ describe('github api path', () => {
   it('single commit in window gets aggregate files, stats and path-based kind', async () => {
     const one = json('github/compare.json');
     one.commits = [one.commits[0]];
+    one.total_commits = 1;
     const m = mock(ghRoutes([[/\/compare\//, () => res(JSON.stringify(one))]]));
     const r = await checkRepo(REF, WIN, PREV, { fetch: m.fetch, token: 't', budget: budgetAlways });
     const c = r.facts!.commits[0];
@@ -224,6 +246,39 @@ describe('github api path', () => {
   });
 });
 
+describe('repo input validation', () => {
+  it.each([
+    ['github', '../../user'],
+    ['github', 'a/b/c'],
+    ['github', 'a/..'],
+    ['github', 'o/r?x=1'],
+    ['github', 'o'],
+    ['github', './r'],
+    ['gitlab', 'a/..'],
+    ['gitlab', 'a/b?x=1'],
+    ['gitlab', 'a/b/c/d/e/f'],
+  ] as const)('%s %s -> invalid_repo, no fetch, no budget', async (host, repo) => {
+    let fetches = 0;
+    let budgets = 0;
+    const r = await checkRepo({ host, repo }, WIN, PREV, {
+      token: 't',
+      fetch: async () => (fetches++, res('{}')),
+      budget: async () => (budgets++, true),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('invalid_repo');
+    expect(fetches).toBe(0);
+    expect(budgets).toBe(0);
+  });
+
+  it('gitlab nested groups up to 5 segments are accepted', async () => {
+    const m = mock([[/./, () => res('[]')]]);
+    const r = await checkRepo({ host: 'gitlab', repo: 'a/b/c/d/e', branch: 'main' }, WIN, null, { fetch: m.fetch });
+    expect(r.error).not.toBe('invalid_repo');
+    expect(m.urls()[0]).toContain('/projects/a%2Fb%2Fc%2Fd%2Fe/');
+  });
+});
+
 describe('atom path', () => {
   const atomRoutes: Route[] = [
     [/commits\/master\.atom/, () => res(fx('github/commits.atom'))],
@@ -333,6 +388,18 @@ describe('gitlab', () => {
     expect(r.ok).toBe(false);
     expect(r.degraded).toBe(true);
     expect(m.log).toHaveLength(0);
+  });
+
+  it('range has 3 commits, 1 in window -> aggregate not applied', async () => {
+    const cmp = JSON.parse(fx('gitlab/compare.json'));
+    cmp.commits.push({ id: 'x' });
+    const one = JSON.parse(fx('gitlab/commits.json')).slice(0, 1);
+    cmp.diffs = [{ old_path: 'README.md', new_path: 'README.md' }];
+    const m = mock([[/repository\/commits\?/, () => res(JSON.stringify(one))], [/repository\/compare\?/, () => res(JSON.stringify(cmp))], ...routes]);
+    const r = await checkRepo(GL, W, PREV, { fetch: m.fetch });
+    expect(r.facts!.commits).toHaveLength(1);
+    expect(r.facts!.commits[0].files).toBeNull();
+    expect(r.facts!.commits[0].kind).toBe('code');
   });
 
   it('compare 404 -> commits kept with null files, degraded', async () => {

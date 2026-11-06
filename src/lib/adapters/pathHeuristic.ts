@@ -19,12 +19,14 @@ export function classifyPaths(files: string[]): 'code' | 'cosmetic' {
   return files.length > 0 && files.every(isCosmeticPath) ? 'cosmetic' : 'code';
 }
 
-/** Message-only guess for Atom mode (no file list). */
+/** Message-only guess when files are unknown. Defaults to 'code'; cosmetic only for clear non-shipping subjects. */
 export function classifyMessage(msg: string): 'code' | 'cosmetic' {
-  const m = msg.trim();
-  if (/^(docs|ci|style)(\([^)]*\))?!?(:|\b)/i.test(m)) return 'cosmetic';
-  if (/^chore\(deps[^)]*\)/i.test(m)) return 'cosmetic';
-  if (/\b(readme|typo|bump)\b/i.test(m)) return 'cosmetic';
+  const m = msg.trim().split(/\r?\n/)[0].trim();
+  if (/^(docs|ci|style|chore\(deps[^)]*\)|build\(deps[^)]*\))(\([^)]*\))?!?:/i.test(m)) return 'cosmetic';
+  if (/^(update|fix|edit) (the )?readme\b/i.test(m)) return 'cosmetic';
+  if (/^typo\b/i.test(m)) return 'cosmetic';
+  if (/^(bump|update) (version|deps|dependencies)\b/i.test(m)) return 'cosmetic';
+  if (/^merge (branch|pull request)/i.test(m)) return 'cosmetic';
   return 'code';
 }
 

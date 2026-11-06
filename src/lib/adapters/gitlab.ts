@@ -62,11 +62,13 @@ export async function checkGitlab(
     if (prevHeadSha && commits.length > 0) {
       const cmp = await call(`${proj}/repository/compare?from=${encodeURIComponent(prevHeadSha)}&to=${encodeURIComponent(branch)}`);
       if (cmp && cmp.status === 200) {
-        const diffs = (JSON.parse(cmp.body) as { diffs?: { new_path?: string; old_path?: string }[] }).diffs ?? [];
+        const body = JSON.parse(cmp.body) as { commits?: unknown[]; diffs?: { new_path?: string; old_path?: string }[] };
+        const diffs = body.diffs ?? [];
         const files = diffs.map((d) => d.new_path ?? d.old_path ?? '').filter(Boolean);
         const adds = commits.reduce((s, c) => s + (c.additions ?? 0), 0);
         const dels = commits.reduce((s, c) => s + (c.deletions ?? 0), 0);
-        commits = applyAggregate(commits, files, adds, dels);
+        // aggregate describes the whole range; only valid when every range commit is in the window
+        if ((body.commits?.length ?? -1) === commits.length) commits = applyAggregate(commits, files, adds, dels);
       } else {
         degraded = true; // budget refused, or prev sha gone / history rewritten: keep commits without file lists
       }

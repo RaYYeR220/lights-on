@@ -9,6 +9,7 @@ const WEB = 'https://github.com';
 const xml = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
+  parseTagValue: false,
   isArray: (name) => name === 'entry' || name === 'link',
 });
 const parseXml = (body: string) => xml.parse(body.replace(/<!DOCTYPE[^[>]*(\[[\s\S]*?\])?\s*>/gi, ''));
@@ -113,7 +114,7 @@ export async function checkGithub(
     return r.body;
   };
   const atomCommits = async (branch: string) => {
-    const all = parseCommitsAtom(await atomGet(`${WEB}/${ref.repo}/commits/${encodeURIComponent(branch)}.atom`));
+    const all = parseCommitsAtom(await atomGet(`${WEB}/${ref.repo}/commits/${branch.split('/').map(encodeURIComponent).join('/')}.atom`));
     return { head: all[0]?.sha ?? null, commits: all.filter((c) => inWindow(c.date, window)) };
   };
   const atomReleases = async () =>
@@ -155,22 +156,28 @@ export async function checkGithub(
           degraded = true; // history rewritten / prev sha gone
           useSince = true;
         } else if (cmp && cmp.status === 200) {
-          const body = JSON.parse(cmp.body) as { commits?: GhCommit[]; files?: { filename: string; additions?: number; deletions?: number }[] };
-          const all = body.commits ?? []; // oldest first
-          const inWin = all.map(toCommit).filter((c) => inWindow(c.date, window));
+          const body = JSON.parse(cmp.body) as { total_commits?: number; commits?: GhCommit[]; files?: { filename: string; additions?: number; deletions?: number }[] };
+          const all = body.commits ?? []; // oldest first, page 1 only
           const files = body.files ?? [];
-          // the aggregate file list only describes the range; if part of it is outside the window it no longer maps
-          commits =
-            inWin.length === all.length
-              ? applyAggregate(
-                  inWin,
-                  files.map((f) => f.filename),
-                  files.reduce((s, f) => s + (f.additions ?? 0), 0),
-                  files.reduce((s, f) => s + (f.deletions ?? 0), 0),
-                )
-              : inWin;
-          headSha = all.length ? all[all.length - 1].sha : prevHeadSha;
-          got = true;
+          if ((body.total_commits ?? all.length) > all.length || files.length >= 300) {
+            // truncated compare: commit list / file list incomplete, head unknown -> since-query instead
+            degraded = true;
+            useSince = true;
+          } else {
+            const inWin = all.map(toCommit).filter((c) => inWindow(c.date, window));
+            // the aggregate file list only describes the whole range; if part of it is outside the window it no longer maps
+            commits =
+              inWin.length === all.length
+                ? applyAggregate(
+                    inWin,
+                    files.map((f) => f.filename),
+                    files.reduce((s, f) => s + (f.additions ?? 0), 0),
+                    files.reduce((s, f) => s + (f.deletions ?? 0), 0),
+                  )
+                : inWin;
+            headSha = all.length ? all[all.length - 1].sha : prevHeadSha;
+            got = true;
+          }
         } else if (cmp) {
           return fail(`github compare ${cmp.status}`);
         }
