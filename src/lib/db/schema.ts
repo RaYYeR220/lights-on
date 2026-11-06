@@ -77,6 +77,8 @@ export const nights = pgTable('nights', {
   attestNonce: integer('attest_nonce'),
   /** Address that signed attest_tx: its nonce is checked against this account, not whatever key is configured now. */
   attestSender: text('attest_sender'),
+  /** First persist of attest_tx (before the send): a `dropped` verdict is acted on only once this is 10 min old. */
+  attestSentAt: tsz('attest_sent_at'),
   attestClaimedAt: tsz('attest_claimed_at'),
   /** Claim token (random uuid per claim statement): every write to a claimed row must present it. */
   attestClaimId: text('attest_claim_id'),

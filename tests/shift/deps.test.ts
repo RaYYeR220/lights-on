@@ -66,10 +66,21 @@ describe('attestDepsFor', () => {
   it('never hands out the wallet without a registered watcher agentId', () => {
     const wallet = { account: {} } as never;
     const base = { signer: { wallet, publicClient: {} as never }, budget: async () => true } as unknown as ShiftDeps;
-    expect(attestDepsFor({ ...base, agentId: undefined }).wallet).toBeNull();
-    expect(attestDepsFor({ ...base, agentId: 0n }).wallet).toBeNull();
-    expect(attestDepsFor({ ...base, agentId: 5n }).wallet).toBe(wallet);
+    const persist = async () => undefined;
+    expect(attestDepsFor({ ...base, agentId: undefined }, persist).wallet).toBeNull();
+    expect(attestDepsFor({ ...base, agentId: 0n }, persist).wallet).toBeNull();
+    expect(attestDepsFor({ ...base, agentId: 5n }, persist).wallet).toBe(wallet);
     expect(canAttest({ agentId: 5n })).toBe(true);
     expect(canAttest({})).toBe(false);
+  });
+
+  it('production attest deps always carry the persist hook and never the unsafe flag', () => {
+    const base = { signer: { wallet: { account: {} } as never, publicClient: {} as never }, budget: async () => true, agentId: 5n } as unknown as ShiftDeps;
+    const persist = async () => undefined;
+    const d = attestDepsFor(base, persist);
+    expect(d.onBroadcast).toBe(persist);
+    expect('unsafeNoPersist' in d).toBe(false);
+    // @ts-expect-error onBroadcast is a required argument for production callers
+    expect(() => attestDepsFor(base)).toThrow(/onBroadcast/);
   });
 });

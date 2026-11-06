@@ -8,7 +8,9 @@ import { checkRepoDetailed, type FetchLike } from '@/lib/adapters/repo';
 import { checkChain } from '@/lib/adapters/chain';
 import { checkVibestarter } from '@/lib/adapters/vibestarter';
 import { DEFAULT_BASE_RPC, getBaseClient, type RpcLike } from '@/lib/adapters/baseRpc';
-import { attestMany, attestOne, attestationStatus, type AttestDeps, type AttestReceipt } from '@/lib/attest/eas';
+import {
+  attestMany, attestOne, attestationStatus, type AttestDeps, type AttestReceipt, type PersistingAttestDeps,
+} from '@/lib/attest/eas';
 import { getPublicClient, getWallet, type AnyPublicClient } from '@/lib/attest/signer';
 import { safeFetch } from '@/lib/net/safeFetch';
 import { explainNight } from './explain';
@@ -65,16 +67,21 @@ export function canAttest(deps: Pick<ShiftDeps, 'agentId'>): boolean {
   return typeof deps.agentId === 'bigint' && deps.agentId > 0n;
 }
 
+/**
+ * Attest deps for production callers. `onBroadcast` is required: it persists the signed tx hash before the send
+ * (send() refuses to send without it).
+ */
 export function attestDepsFor(
-  deps: ShiftDeps, onBroadcast?: AttestDeps['onBroadcast'], opts: { receiptTimeoutMs?: number } = {},
-): AttestDeps {
+  deps: ShiftDeps, onBroadcast: PersistingAttestDeps['onBroadcast'], opts: { receiptTimeoutMs?: number } = {},
+): PersistingAttestDeps {
+  if (typeof onBroadcast !== 'function') throw new Error('attestDepsFor: onBroadcast is required');
   return {
     wallet: canAttest(deps) ? deps.signer?.wallet ?? null : null,
     // Never read when wallet is null: attest returns { skipped: 'disabled' } first.
     publicClient: (deps.signer?.publicClient ?? null) as unknown as AnyPublicClient,
     budget: (wei) => deps.budget('gas_wei', wei),
     release: async (wei) => { await deps.release?.('gas_wei', wei); },
-    ...(onBroadcast ? { onBroadcast } : {}),
+    onBroadcast,
     ...(opts.receiptTimeoutMs ? { receiptTimeoutMs: opts.receiptTimeoutMs } : {}),
   };
 }

@@ -270,21 +270,35 @@ export async function leaseShift(db: Db, shiftId: number, now: Date, ms: number)
 // A claim is a token (attest_claim_id, a fresh uuid per claim statement). Every later write to claimed rows presents
 // it, so a pass can only ever touch rows it claimed itself, never a newer claim of another pass.
 
-const claimable = (shiftId: number) => and(
+/** A claim with no persisted tx this old is taken over by the next claim (its holder died before signing). */
+export const RECLAIM_AFTER_MS = 10 * 60_000;
+
+/**
+ * Rows a claim statement may take: unclaimed, or claimed more than RECLAIM_AFTER_MS ago with no tx persisted. A tx can
+ * only be sent after its hash is persisted under the claim token, so a tx-less claim has nothing on chain; the old
+ * holder's late persist then matches 0 rows (the token changed), so it never sends.
+ */
+const claimable = (shiftId: number, at: Date) => and(
   eq(nights.shiftId, shiftId),
   eq(nights.observed, true),
   isNull(nights.attestationUid),
-  isNull(nights.attestClaimedAt),
   isNotNull(nights.evidenceHash),
+  or(
+    isNull(nights.attestClaimedAt),
+    and(isNull(nights.attestTx), lt(nights.attestClaimedAt, new Date(at.getTime() - RECLAIM_AFTER_MS))),
+  ),
 );
 
-/** Atomically claim up to `limit` claimable nights of a shift (lowest ids first) under `claimId`. Each row goes to one caller. */
+/**
+ * Atomically claim up to `limit` claimable nights of a shift (lowest ids first) under `claimId`. Each row goes to one
+ * caller. Taking over a stale tx-less claim is part of the same statement: release and re-claim are one write.
+ */
 export async function claimShiftNights(db: Db, shiftId: number, at: Date, claimId: string, limit: number): Promise<NightRow[]> {
-  const ids = db.select({ id: nights.id }).from(nights).where(claimable(shiftId)).orderBy(asc(nights.id)).limit(limit);
+  const ids = db.select({ id: nights.id }).from(nights).where(claimable(shiftId, at)).orderBy(asc(nights.id)).limit(limit);
   const rows = await db
     .update(nights)
     .set({ attestClaimedAt: at, attestClaimId: claimId })
-    .where(and(inArray(nights.id, ids), claimable(shiftId)))
+    .where(and(inArray(nights.id, ids), claimable(shiftId, at)))
     .returning();
   return rows.sort((a, b) => a.id - b.id);
 }
@@ -298,7 +312,7 @@ export async function releaseNightClaims(db: Db, ids: number[], claimId: string,
   if (ids.length === 0) return;
   await db
     .update(nights)
-    .set({ attestClaimedAt: null, attestClaimId: null, attestTx: null, attestNonce: null, attestSender: null })
+    .set({ attestClaimedAt: null, attestClaimId: null, attestTx: null, attestNonce: null, attestSender: null, attestSentAt: null })
     .where(and(
       inArray(nights.id, ids),
       isNull(nights.attestationUid),
@@ -309,20 +323,30 @@ export async function releaseNightClaims(db: Db, ids: number[], claimId: string,
 
 /**
  * Record the signed tx (+ nonce + sender) on our claimed batch, before it is sent or while its outcome is unknown.
- * A null nonce/sender never erases one already recorded.
+ * A null nonce/sender never erases one already recorded; `attest_sent_at` keeps the FIRST persist time (`at`).
+ * Returns how many rows were written: fewer than `ids` means some row is no longer held under `claimId` (or already
+ * carries another tx), and the caller must then not send.
  */
 export async function markNightsBroadcast(
-  db: Db, ids: number[], claimId: string, tx: string, nonce: number | null, sender: string | null = null,
-): Promise<void> {
-  if (ids.length === 0) return;
-  await db
+  db: Db, ids: number[], claimId: string, tx: string, nonce: number | null, sender: string | null, at: Date,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const rows = await db
     .update(nights)
     .set({
       attestTx: tx,
       attestNonce: sql`COALESCE(${nonce}::int, ${nights.attestNonce})`,
       attestSender: sql`COALESCE(${sender}::text, ${nights.attestSender})`,
+      attestSentAt: sql`COALESCE(${nights.attestSentAt}, ${at.toISOString()}::timestamptz)`,
     })
-    .where(and(inArray(nights.id, ids), isNull(nights.attestationUid), eq(nights.attestClaimId, claimId)));
+    .where(and(
+      inArray(nights.id, ids),
+      isNull(nights.attestationUid),
+      eq(nights.attestClaimId, claimId),
+      or(isNull(nights.attestTx), eq(nights.attestTx, tx)), // never swaps the tx of a batch
+    ))
+    .returning({ id: nights.id });
+  return rows.length;
 }
 
 /** Claimed rows of a shift with a broadcast tx but no uid yet, in batch order (id ascending). */

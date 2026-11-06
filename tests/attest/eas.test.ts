@@ -39,7 +39,11 @@ function deps(over: {
   const wallet = over.wallet === null ? null : ({ account: { address: zeroAddress }, chain: undefined, signTransaction, sendRawTransaction } as never);
   const budget = vi.fn(over.budget ?? (async () => true));
   const release = vi.fn(async (_w: bigint) => undefined);
-  return { d: { wallet, publicClient, budget, release } as unknown as AttestDeps, signTransaction, sendRawTransaction, publicClient, budget, release };
+  const onBroadcast = vi.fn<(h: Hex, n: number, s: string) => Promise<void>>(async () => undefined); // production callers always persist
+  return {
+    d: { wallet, publicClient, budget, release, onBroadcast } as unknown as AttestDeps,
+    signTransaction, sendRawTransaction, publicClient, budget, release, onBroadcast,
+  };
 }
 
 describe('eas encoding', () => {
@@ -79,6 +83,24 @@ describe('attest gas cap', () => {
     expect(r).toEqual({ skipped: 'error', error: 'error' });
     expect(JSON.stringify(r)).not.toContain('SECRET');
     expect(sendRawTransaction).not.toHaveBeenCalled();
+  });
+
+  it('no onBroadcast (and no unsafeNoPersist) -> refused: nothing estimated, reserved, signed or sent', async () => {
+    const { d, publicClient, budget, signTransaction, sendRawTransaction } = deps();
+    const bare = { ...d, onBroadcast: undefined };
+    expect(await attestOne(night(), bare)).toEqual({ skipped: 'error', error: 'no_persist' });
+    expect(await attestMany([night(1), night(2)], bare)).toEqual({ skipped: 'error', error: 'no_persist' });
+    expect(publicClient.estimateContractGas).not.toHaveBeenCalled();
+    expect(budget).not.toHaveBeenCalled();
+    expect(signTransaction).not.toHaveBeenCalled();
+    expect(sendRawTransaction).not.toHaveBeenCalled();
+  });
+
+  it('unsafeNoPersist (fork tests only) sends without a persist', async () => {
+    const { d, publicClient, sendRawTransaction } = deps();
+    publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', transactionHash: SENT, logs: [] });
+    await attestOne(night(), { ...d, onBroadcast: undefined, unsafeNoPersist: true });
+    expect(sendRawTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('empty batch is not sent', async () => {

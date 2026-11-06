@@ -1,0 +1,1 @@
+ALTER TABLE "nights" ADD COLUMN "attest_sent_at" timestamp with time zone;

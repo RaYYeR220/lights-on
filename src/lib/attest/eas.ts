@@ -35,11 +35,20 @@ export interface AttestDeps {
   /**
    * Called after local signing and BEFORE the raw tx is sent, with its hash, nonce and sender, so the caller can
    * persist them first. If it throws, nothing is sent (the attestation is skipped, the reservation refunded).
+   * Without it nothing is sent at all (`error: 'no_persist'`), unless `unsafeNoPersist` is set.
    */
   onBroadcast?: (txHash: Hex, nonce: number, sender: Address) => Promise<void>;
+  /** Fork tests only: send without persisting the hash first. Never set in production. */
+  unsafeNoPersist?: true;
   /** Receipt wait; default RECEIPT_TIMEOUT_MS. */
   receiptTimeoutMs?: number;
 }
+
+/** Production attest deps: the tx hash is always persisted before the raw tx is sent. */
+export type PersistingAttestDeps = AttestDeps & {
+  onBroadcast: NonNullable<AttestDeps['onBroadcast']>;
+  unsafeNoPersist?: never;
+};
 
 /** Receipt wait before giving up (the tx hash is returned, so nothing is lost). */
 export const RECEIPT_TIMEOUT_MS = 60_000;
@@ -77,8 +86,9 @@ type Logs = readonly { address: string; topics: readonly Hex[]; data: Hex }[];
 
 /**
  * Estimate worst-case cost, reserve it against the cap, sign locally with an explicit nonce, persist the hash
- * (onBroadcast), then send the raw tx. Never throws. From the moment the hash is persisted every outcome carries it
- * and the reservation is kept, because the node may have accepted the tx even if the send call failed.
+ * (onBroadcast, required unless `unsafeNoPersist`), then send the raw tx. Never throws. From the moment the hash is
+ * persisted every outcome carries it and the reservation is kept, because the node may have accepted the tx even if
+ * the send call failed.
  */
 async function send(
   call: { functionName: 'attest' | 'multiAttest'; args: unknown },
@@ -86,6 +96,9 @@ async function send(
 ): Promise<{ txHash: Hex; nonce: number; logs: Logs } | Skipped> {
   const { wallet, publicClient } = deps;
   if (!wallet) return { skipped: 'disabled' };
+  // A hash that is not persisted before the send could be lost, and its rows sent again: refuse, reserve nothing.
+  const persist = deps.onBroadcast;
+  if (!persist && deps.unsafeNoPersist !== true) return { skipped: 'error', error: 'no_persist' };
   let sent: Hex | undefined;
   let nonce: number | undefined;
   try {
@@ -119,7 +132,7 @@ async function send(
       } as never);
       signed = true;
       hash = keccak256(serialized);
-      await deps.onBroadcast?.(hash, n, sender); // persisted BEFORE it can reach any node
+      await persist?.(hash, n, sender); // persisted BEFORE it can reach any node
     } catch (e) {
       await deps.release?.(reserved).catch(() => undefined); // nothing was sent: refund
       return { skipped: 'error', error: signed ? 'persist_failed' : safeErrorCode(e) };

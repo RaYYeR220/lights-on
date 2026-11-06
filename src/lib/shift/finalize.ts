@@ -21,6 +21,11 @@ export const STALE_AFTER_MS = 45 * 60_000;
 export const STALE_PASS_MS = 60_000;
 /** One stale pass per shift at a time; outlives a bounded pass plus one receipt wait. */
 export const STALE_LEASE_MS = 5 * 60_000;
+/**
+ * A `dropped` verdict is acted on only once the tx was first persisted this long ago: a lagging replica of a
+ * load-balanced RPC may not know a fresh tx yet. A younger "dropped" tx stays pending.
+ */
+export const DROP_AFTER_MS = 10 * 60_000;
 const MISSING_SUMMARY = 'The check for this project did not complete in this shift, so no claim is made either way.';
 
 export interface FinalizeOptions {
@@ -92,11 +97,17 @@ async function fillMissingNights(shift: ShiftRow, deps: ShiftDeps): Promise<void
   }
 }
 
+/** When the batch's tx was first persisted (legacy rows: claim time); unknown -> never old enough. */
+function persistedAt(batch: NightRow[]): number {
+  return Math.max(...batch.map((r) => (r.attestSentAt ?? r.attestClaimedAt)?.getTime() ?? Number.POSITIVE_INFINITY));
+}
+
 /**
  * Settle batches that were broadcast but never confirmed (rows held under a claim token with attest_tx, no uid), one
  * group per (claim token, tx). Mined: uids from the EAS `Attested` logs, mapped onto the rows in batch order (id
- * ascending, the order they were sent). Confirmed revert, or dropped (no receipt and a later tx consumed its nonce):
- * release the rows. Pending, RPC error or count mismatch: leave them claimed, so they are never sent twice.
+ * ascending, the order they were sent). Confirmed revert, or dropped (no receipt, a later tx consumed its nonce, and
+ * the tx was persisted >= DROP_AFTER_MS ago): release the rows. Pending, a younger dropped, RPC error or count
+ * mismatch: leave them claimed, so they are never sent twice.
  * Every write presents the group's claim token AND tx, so a slower concurrent reconciler can never touch rows that
  * were released and re-claimed in the meantime.
  */
@@ -126,7 +137,7 @@ async function reconcileBroadcasts(shift: ShiftRow, deps: ShiftDeps, o: Required
       }
       attested += await setNightAttestations(deps.db, batch.map((r, i) => ({ id: r.id, uid: rc.uids[i] })), tx, claimId);
       last = tx;
-    } else if (rc.status === 'reverted' || rc.status === 'dropped') {
+    } else if (rc.status === 'reverted' || (rc.status === 'dropped' && deps.now().getTime() - persistedAt(batch) >= DROP_AFTER_MS)) {
       await releaseNightClaims(deps.db, ids, claimId, tx);
     }
   }
@@ -151,8 +162,10 @@ async function attestationsFor(rows: NightRow[], shift: ShiftRow, deps: ShiftDep
  * Close a nightly shift. Safe to call repeatedly and concurrently:
  *   1. reconcile batches broadcast earlier but never confirmed;
  *   2. fill missing nights (`unavailable`);
- *   3. loop: claim <= 20 unattested rows under a fresh claim token (each row reaches exactly one caller), send them
- *      with one multiAttest. A batch that was never broadcast, or that reverted, is released for a retry; a broadcast
+ *   3. loop: claim <= 20 unattested rows under a fresh claim token (each row reaches exactly one caller; a tx-less
+ *      claim older than 10 min is taken over in the same statement), send them with one multiAttest. The signed
+ *      hash is persisted under the token before the send, and the send goes ahead only if every row of the batch
+ *      was still ours. A batch that was never broadcast, or that reverted, is released for a retry; a broadcast
  *      batch with an unknown outcome keeps its claim, tx, nonce and sender (persisted before the send), for step 1
  *      of a later pass, and the loop stops;
  *   4. status `attested` / `attest_pending` (also after any throw), then the finalization claim: onFinalized fires
@@ -201,9 +214,11 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
 
         const flight: Flight = { ids, claimId };
         inflight = flight;
-        // Runs after signing and BEFORE the raw tx is sent: if this write fails, nothing is sent.
+        // Runs after signing and BEFORE the raw tx is sent: if this write fails, or misses any row of the batch (its
+        // claim was taken over), it throws and nothing is sent; the rows still held are then released below.
         const onBroadcast = async (h: Hex, nonce: number, sender: Address) => {
-          await markNightsBroadcast(db, ids, claimId, h, nonce, sender);
+          const written = await markNightsBroadcast(db, ids, claimId, h, nonce, sender, deps.now());
+          if (written !== ids.length) throw new Error('claim_lost');
           flight.tx = h;
           flight.nonce = nonce;
           flight.sender = sender;
@@ -213,7 +228,8 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
           r = await deps.attestMany(atts, attestDepsFor(deps, onBroadcast));
         } catch (e) {
           if (!flight.tx) {
-            // Unknown whether it was sent: keep the claim (never risk a second attestation).
+            // No tx was persisted, so nothing was sent (send() persists before it sends). Keep the claim anyway:
+            // the next claim takes it over once it is 10 min old, and a late persist from this pass then fails.
             skipped = 'unconfirmed';
             note = 'unconfirmed:unknown';
             inflight = null;
@@ -226,7 +242,7 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
           if (tx && r.error !== 'reverted') {
             // Broadcast, outcome unknown: keep claim + tx + nonce; a later pass settles it from the receipt.
             flight.tx = tx;
-            await markNightsBroadcast(db, ids, claimId, tx, r.nonce ?? flight.nonce ?? null, flight.sender ?? null);
+            await markNightsBroadcast(db, ids, claimId, tx, r.nonce ?? flight.nonce ?? null, flight.sender ?? null, deps.now());
             skipped = 'unconfirmed';
             note = `unconfirmed:${r.error ?? 'error'}`;
           } else {
@@ -255,7 +271,7 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
     note ??= `skipped:error:${safeErrorCode(e)}`;
     console.error('shift.finalize failed:', safeErrorCode(e));
     const f = inflight as Flight | null;
-    if (f?.tx) await markNightsBroadcast(db, f.ids, f.claimId, f.tx, f.nonce ?? null, f.sender ?? null).catch(() => undefined);
+    if (f?.tx) await markNightsBroadcast(db, f.ids, f.claimId, f.tx, f.nonce ?? null, f.sender ?? null, deps.now()).catch(() => undefined);
   } finally {
     for (const u of unsent) await releaseNightClaims(db, u.ids, u.claimId).catch(() => undefined);
   }

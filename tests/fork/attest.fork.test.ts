@@ -78,7 +78,7 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
 
   it('attestMany of 3 nights then verifyNight matches; tampered bundle does not', async () => {
     const bundles = [20261104, 20261105, 20261106].map((n) => bundle(n));
-    const r = await attestMany(bundles.map((b) => nightFor(b, 7n)), { wallet, publicClient, budget });
+    const r = await attestMany(bundles.map((b) => nightFor(b, 7n)), { wallet, publicClient, budget, unsafeNoPersist: true });
     if ('skipped' in r) throw new Error(`skipped ${r.skipped} ${r.error}`);
     expect(r.uids).toHaveLength(3);
     expect(new Set(r.uids).size).toBe(3);
@@ -108,7 +108,7 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
     const otherAccount = privateKeyToAccount(generatePrivateKey());
     await publicClient.request({ method: 'anvil_setBalance', params: [otherAccount.address, '0x56bc75e2d63100000'] } as never);
     const otherWallet = createWalletClient({ account: otherAccount, chain: base, transport: http(RPC, { retryCount: 15, retryDelay: 300 }) });
-    const foreign = await attestOne(n, { wallet: otherWallet, publicClient, budget });
+    const foreign = await attestOne(n, { wallet: otherWallet, publicClient, budget, unsafeNoPersist: true });
     if ('skipped' in foreign) throw new Error(`skipped ${foreign.skipped} ${foreign.error}`);
     const fv = await verifyNight(foreign.uid, b, publicClient, [account.address]);
     expect(fv.match).toBe(false);
@@ -133,7 +133,7 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
     expect(sv.checks.schema).toBe(false);
 
     // replay a valid attestation against a bundle with a different project / night
-    const good = await attestOne(n, { wallet, publicClient, budget });
+    const good = await attestOne(n, { wallet, publicClient, budget, unsafeNoPersist: true });
     if ('skipped' in good) throw new Error(`skipped ${good.skipped}`);
     expect((await verifyNight(good.uid, b, publicClient, [account.address])).match).toBe(true);
     const otherProject = await verifyNight(good.uid, { ...b, project: 'other' }, publicClient, [account.address]);
@@ -152,15 +152,21 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
 
   it('attestOne returns a verifiable uid', async () => {
     const b = bundle(20261107);
-    const r = await attestOne(nightFor(b, 7n), { wallet, publicClient, budget });
+    const r = await attestOne(nightFor(b, 7n), { wallet, publicClient, budget, unsafeNoPersist: true });
     if ('skipped' in r) throw new Error(`skipped ${r.skipped} ${r.error}`);
     expect((await verifyNight(r.uid, b, publicClient, [account.address])).match).toBe(true);
   });
 
   it('gas cap refusal sends no tx on the fork', async () => {
     const before = await publicClient.getTransactionCount({ address: account.address });
-    const r = await attestOne(nightFor(bundle(20261108), 7n), { wallet, publicClient, budget: async () => false });
+    const r = await attestOne(nightFor(bundle(20261108), 7n), { wallet, publicClient, budget: async () => false, unsafeNoPersist: true });
     expect(r).toEqual({ skipped: 'gas_cap' });
+    expect(await publicClient.getTransactionCount({ address: account.address })).toBe(before);
+  });
+
+  it('no persist hook and no unsafeNoPersist: refused, no tx on the fork', async () => {
+    const before = await publicClient.getTransactionCount({ address: account.address });
+    expect(await attestOne(nightFor(bundle(20261109), 7n), { wallet, publicClient, budget })).toEqual({ skipped: 'error', error: 'no_persist' });
     expect(await publicClient.getTransactionCount({ address: account.address })).toBe(before);
   });
 

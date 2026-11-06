@@ -319,8 +319,27 @@ describe('post-broadcast reconciliation (no double attestation)', () => {
     expect((await nightsOf(shift.id))[0].attestClaimedAt).not.toBeNull();
 
     const dropped = makeDeps(db, { attestReceipt: vi.fn(async () => ({ status: 'dropped' as const })) });
+    dropped.clock.now = new Date(NOW.getTime() + 11 * 60_000); // persisted >= 10 min ago
     expect(await finalizeShift(shift.id, dropped.deps)).toEqual({ attested: 1, txHash: TX });
     expect(dropped.deps.attestMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('dropped is acted on only once the persist is >= 10 min old (a lagging RPC replica may not know a fresh tx)', async () => {
+    const { shift } = await shiftWithNights(1);
+    await finalizeShift(shift.id, makeDeps(db, { attestMany: lostReceipt(TX2) as never }).deps);
+    expect((await nightsOf(shift.id))[0]).toMatchObject({ attestTx: TX2, attestSentAt: NOW });
+    const young = makeDeps(db, { attestReceipt: vi.fn(async () => ({ status: 'dropped' as const })) });
+    young.clock.now = new Date(NOW.getTime() + 9 * 60_000 + 59_000);
+    expect(await finalizeShift(shift.id, young.deps)).toEqual({ attested: 0 }); // treated as pending
+    expect(young.deps.attestReceipt).toHaveBeenCalledWith(TX2, 7, SENDER);
+    expect(young.deps.attestMany).not.toHaveBeenCalled();
+    expect((await nightsOf(shift.id))[0]).toMatchObject({ attestTx: TX2, attestNonce: 7, attestationUid: null, attestSentAt: NOW });
+    expect((await nightsOf(shift.id))[0].attestClaimId).not.toBeNull();
+
+    const old = makeDeps(db, { attestReceipt: vi.fn(async () => ({ status: 'dropped' as const })) });
+    old.clock.now = new Date(NOW.getTime() + 10 * 60_000);
+    expect(await finalizeShift(shift.id, old.deps)).toEqual({ attested: 1, txHash: TX });
+    expect(old.deps.attestMany).toHaveBeenCalledTimes(1);
   });
 
   it('two interleaved reconcilers over the same rows: the slower one cannot release the fresh claim (one multiAttest)', async () => {
@@ -344,7 +363,8 @@ describe('post-broadcast reconciliation (no double attestation)', () => {
       if (me === 1) { firstInFlight.resolve(); await goFirst.promise; } // fresh claim held, tx in flight
       return { uids: ns.map((_, i) => uidOf(100 * me + i)), txHash: TX };
     });
-    const { deps } = makeDeps(db, { attestReceipt, attestMany: attestMany as never });
+    const { deps, clock } = makeDeps(db, { attestReceipt, attestMany: attestMany as never });
+    clock.now = new Date(NOW.getTime() + 11 * 60_000); // the dropped tx was persisted >= 10 min ago
     const done: number[] = [];
     const runs = [finalizeShift(shift.id, deps), finalizeShift(shift.id, deps)].map((p, i) => p.then((r) => { done.push(i); return r; }));
     await firstInFlight.promise; // the faster one released the dropped batch and re-claimed it under a new token
@@ -495,6 +515,42 @@ describe('claims', () => {
     expect(tokens.size).toBe(2);
   });
 
+  it('a tx-less claim older than 10 min is taken over under a new token and sent once; a 5-min-old one is not', async () => {
+    const { shift } = await shiftWithNights(3);
+    const dies = vi.fn(async () => { throw new Error('function killed'); }); // died before signing: no tx persisted
+    expect(await finalizeShift(shift.id, makeDeps(db, { attestMany: dies as never }).deps)).toMatchObject({ skipped: 'unconfirmed' });
+    const tokens = new Set((await nightsOf(shift.id)).map((n) => n.attestClaimId));
+    expect(tokens.size).toBe(1);
+    const [t1] = [...tokens];
+    expect(t1).toBeTruthy();
+
+    const at5 = makeDeps(db);
+    at5.clock.now = new Date(NOW.getTime() + 5 * 60_000);
+    expect(await finalizeShift(shift.id, at5.deps)).toEqual({ attested: 0 });
+    expect(at5.deps.attestMany).not.toHaveBeenCalled();
+    expect((await nightsOf(shift.id)).every((n) => n.attestClaimId === t1 && n.attestationUid === null)).toBe(true);
+
+    const at11 = makeDeps(db);
+    at11.clock.now = new Date(NOW.getTime() + 11 * 60_000);
+    expect(await finalizeShift(shift.id, at11.deps)).toEqual({ attested: 3, txHash: TX });
+    expect(at11.deps.attestMany).toHaveBeenCalledTimes(1);
+    expect(((at11.deps.attestMany as Mock).mock.calls[0][0] as NightAttestation[]).length).toBe(3);
+    const rows = await nightsOf(shift.id);
+    expect(rows.every((n) => n.attestationUid !== null && n.attestClaimId !== t1)).toBe(true);
+    expect(new Set(rows.map((n) => n.attestClaimId)).size).toBe(1); // one new token
+    expect(rows.every((n) => n.attestClaimedAt?.getTime() === at11.clock.now.getTime())).toBe(true);
+    expect(await finalizeShift(shift.id, at11.deps)).toEqual({ attested: 0 }); // sent once
+    expect(at11.deps.attestMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stale claim WITH a persisted tx is never taken over by a claim (reconcile owns it)', async () => {
+    const { shift } = await shiftWithNights(1);
+    const [row] = await claimShiftNights(db, shift.id, NOW, 'token-a', 20);
+    expect(await markNightsBroadcast(db, [row.id], 'token-a', TX2, 3, SENDER, NOW)).toBe(1);
+    expect(await claimShiftNights(db, shift.id, new Date(NOW.getTime() + 24 * 3600_000), 'token-b', 20)).toEqual([]);
+    expect((await nightsOf(shift.id))[0]).toMatchObject({ attestClaimId: 'token-a', attestTx: TX2 });
+  });
+
   it('a release that fails in the never-broadcast branch is retried before finalize returns', async () => {
     const { shift } = await shiftWithNights(2);
     let updates = 0;
@@ -514,10 +570,14 @@ describe('claims', () => {
     const { shift } = await shiftWithNights(1);
     const [row] = await claimShiftNights(db, shift.id, NOW, 'token-a', 20);
     await releaseNightClaims(db, [row.id], 'token-b');
-    await markNightsBroadcast(db, [row.id], 'token-b', TX2, 1);
+    expect(await markNightsBroadcast(db, [row.id], 'token-b', TX2, 1, null, NOW)).toBe(0);
     await setNightAttestations(db, [{ id: row.id, uid: uidOf(1) }], TX2, 'token-b');
     expect((await nightsOf(shift.id))[0]).toMatchObject({ attestClaimId: 'token-a', attestTx: null, attestationUid: null });
-    await markNightsBroadcast(db, [row.id], 'token-a', TX2, 1);
+    expect(await markNightsBroadcast(db, [row.id], 'token-a', TX2, 1, null, NOW)).toBe(1);
+    const later = new Date(NOW.getTime() + 3600_000);
+    expect(await markNightsBroadcast(db, [row.id], 'token-a', TX2, null, null, later)).toBe(1); // re-mark, same tx
+    expect(await markNightsBroadcast(db, [row.id], 'token-a', TX, 2, null, later)).toBe(0); // never swaps the tx
+    expect((await nightsOf(shift.id))[0]).toMatchObject({ attestTx: TX2, attestNonce: 1, attestSentAt: NOW }); // first persist kept
     await releaseNightClaims(db, [row.id], 'token-a', TX); // reconcile release for another tx: no-op
     expect((await nightsOf(shift.id))[0]).toMatchObject({ attestClaimId: 'token-a', attestTx: TX2, attestNonce: 1 });
     await setNightAttestations(db, [{ id: row.id, uid: uidOf(1) }], TX, 'token-a'); // uids from a different tx: no-op
@@ -552,12 +612,13 @@ describe('claims', () => {
 describe('real attestMany with a local signer (no chain)', () => {
   const SIGNED = ('0x02' + 'cd'.repeat(90)) as Hex;
   const HASH_OF_SIGNED = keccak256(SIGNED);
-  const fakeSigner = (sendErr?: Error) => {
+  const fakeSigner = (o: { sendErr?: Error; onSign?: () => Promise<void> } = {}) => {
     const sendRawTransaction = vi.fn(async () => {
-      if (sendErr) throw sendErr;
+      if (o.sendErr) throw o.sendErr;
       return HASH_OF_SIGNED;
     });
-    const wallet = { account: { address: SENDER }, chain: undefined, signTransaction: vi.fn(async () => SIGNED), sendRawTransaction };
+    const signTransaction = vi.fn(async () => { await o.onSign?.(); return SIGNED; });
+    const wallet = { account: { address: SENDER }, chain: undefined, signTransaction, sendRawTransaction };
     const publicClient = {
       estimateContractGas: vi.fn(async () => 200_000n),
       getBlock: vi.fn(async () => ({ baseFeePerGas: 1_000_000n })),
@@ -570,7 +631,7 @@ describe('real attestMany with a local signer (no chain)', () => {
 
   it('send fails after the persist -> claim kept with attest_tx + nonce + sender, no release, no gas refund', async () => {
     const { shift } = await shiftWithNights(2);
-    const { signer, sendRawTransaction } = fakeSigner(Object.assign(new Error('already known'), { name: 'TimeoutError' }));
+    const { signer, sendRawTransaction } = fakeSigner({ sendErr: Object.assign(new Error('already known'), { name: 'TimeoutError' }) });
     const release = vi.fn(async () => undefined);
     const { deps } = makeDeps(db, { attestMany: realAttestMany, signer, release });
     expect(await finalizeShift(shift.id, deps)).toMatchObject({ attested: 0, skipped: 'unconfirmed' });
@@ -587,5 +648,55 @@ describe('real attestMany with a local signer (no chain)', () => {
     expect(await finalizeShift(shift.id, later.deps)).toEqual({ attested: 0 });
     expect(attestReceipt).toHaveBeenCalledWith(HASH_OF_SIGNED, 11, SENDER);
     expect(sendRawTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  /** 1.2 x 200k gas x (2 x baseFee 0.001 gwei + tip 0.001 gwei): what one send reserves with fakeSigner. */
+  const RESERVED = 240_000n * 3_000_000n;
+
+  it('a persist that misses a row (its claim token changed under the batch) sends nothing: gas refunded, our rows released', async () => {
+    const { shift } = await shiftWithNights(2);
+    const { signer, sendRawTransaction } = fakeSigner({
+      onSign: async () => {
+        const [firstRow] = await nightsOf(shift.id);
+        await db.update(nights).set({ attestClaimId: 'someone-else' }).where(eq(nights.id, firstRow.id));
+      },
+    });
+    const release = vi.fn(async () => undefined);
+    const { deps } = makeDeps(db, { attestMany: realAttestMany, signer, release });
+    expect(await finalizeShift(shift.id, deps)).toEqual({ attested: 0, skipped: 'error' });
+    expect(sendRawTransaction).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledWith('gas_wei', RESERVED);
+    const rows = await nightsOf(shift.id);
+    expect(rows[0]).toMatchObject({ attestClaimId: 'someone-else', attestTx: null, attestationUid: null }); // not ours: untouched
+    expect(rows[1]).toMatchObject({ attestClaimId: null, attestClaimedAt: null, attestTx: null, attestNonce: null, attestSentAt: null });
+    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attest_pending', notes: 'skipped:error:persist_failed' });
+  });
+
+  it('the old claimant of a taken-over claim: its late persist writes 0 rows and throws, so it never sends', async () => {
+    const { shift } = await shiftWithNights(2);
+    const signing = deferred();
+    const resume = deferred();
+    const { signer, sendRawTransaction } = fakeSigner({ onSign: async () => { signing.resolve(); await resume.promise; } });
+    const release = vi.fn(async () => undefined);
+    const slow = makeDeps(db, { attestMany: realAttestMany, signer, release }); // claims at NOW
+    const a = finalizeShift(shift.id, slow.deps);
+    await signing.promise; // the slow pass holds a tx-less claim and is about to persist
+    const ids = (await nightsOf(shift.id)).map((n) => n.id);
+    const t1 = (await nightsOf(shift.id))[0].attestClaimId!;
+
+    const b = makeDeps(db);
+    b.clock.now = new Date(NOW.getTime() + 11 * 60_000);
+    expect(await finalizeShift(shift.id, b.deps)).toEqual({ attested: 2, txHash: TX }); // took over and sent once
+    expect(await markNightsBroadcast(db, ids, t1, HASH_OF_SIGNED, 11, SENDER, NOW)).toBe(0); // what the late persist sees
+
+    resume.resolve();
+    expect(await a).toEqual({ attested: 0, skipped: 'error' });
+    expect(sendRawTransaction).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledWith('gas_wei', RESERVED); // the slow pass refunded its reservation
+    expect(b.deps.attestMany).toHaveBeenCalledTimes(1);
+    const rows = await nightsOf(shift.id);
+    expect(rows.map((n) => n.attestationUid)).toEqual([uidOf(1), uidOf(2)]);
+    expect(rows.every((n) => n.attestTx === TX && n.attestClaimId !== t1)).toBe(true);
+    expect((await getShift(db, shift.id))?.status).toBe('attested');
   });
 });
