@@ -14,15 +14,47 @@ export class DuplicateNight extends Error {
   }
 }
 
+/**
+ * Insert or update by slug. A NEW project gets the next free `bay` (max+1); an existing project keeps its bay
+ * (`bay` is never part of the update set). Concurrent creators can pick the same number: the unique constraint
+ * rejects the loser, which simply retries with a fresh max.
+ */
 export async function upsertProject(db: Db, p: NewProject): Promise<ProjectRow> {
-  const { slug, ...rest } = p;
-  const [row] = await db
-    .insert(projects)
-    .values(p)
-    .onConflictDoUpdate({ target: projects.slug, set: rest })
-    .returning();
-  if (!row) throw new Error(`upsertProject failed for ${slug}`);
-  return row;
+  const { slug, bay: _ignored, ...rest } = p;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const [row] = await db
+        .insert(projects)
+        .values({ ...rest, slug, bay: sql<number>`(select coalesce(max(${projects.bay}), 0) + 1 from ${projects})` })
+        .onConflictDoUpdate({ target: projects.slug, set: rest })
+        .returning();
+      if (!row) throw new Error(`upsertProject failed for ${slug}`);
+      return row;
+    } catch (e) {
+      const code = (e as { code?: string; cause?: { code?: string } })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
+      if (code === '23505' && attempt < 5) continue;
+      throw e;
+    }
+  }
+}
+
+/** Insert-only variant of upsertProject: a new project gets the next bay; an existing slug is left untouched (null). */
+export async function insertProjectIfNew(db: Db, p: NewProject): Promise<ProjectRow | null> {
+  const { bay: _ignored, ...rest } = p;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const [row] = await db
+        .insert(projects)
+        .values({ ...rest, bay: sql<number>`(select coalesce(max(${projects.bay}), 0) + 1 from ${projects})` })
+        .onConflictDoNothing({ target: projects.slug })
+        .returning();
+      return row ?? null;
+    } catch (e) {
+      const code = (e as { code?: string })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
+      if (code === '23505' && attempt < 5) continue;
+      throw e;
+    }
+  }
 }
 
 export async function getProjectBySlug(db: Db, slug: string): Promise<ProjectRow | null> {
@@ -488,4 +520,53 @@ export async function getLatestFinishedNightly(db: Db): Promise<ShiftRow | null>
     .orderBy(desc(shifts.night))
     .limit(1);
   return row ?? null;
+}
+
+// ---- open surfaces (REST / MCP) ----
+
+export interface NightStatusRow {
+  projectId: number; night: string; status: NightRow['status']; observed: boolean;
+  summary: string | null; createdAt: Date; evidenceHash: string | null; attestationUid: string | null;
+}
+
+/** Lean per-night rows (no signals/notable) of several projects from `from` on, oldest first. */
+export async function getNightStatuses(db: Db, ids: number[], from: string): Promise<NightStatusRow[]> {
+  if (ids.length === 0) return [];
+  return db
+    .select({
+      projectId: nights.projectId, night: nights.night, status: nights.status, observed: nights.observed,
+      summary: nights.summary, createdAt: nights.createdAt, evidenceHash: nights.evidenceHash,
+      attestationUid: nights.attestationUid,
+    })
+    .from(nights)
+    .where(and(inArray(nights.projectId, ids), gte(nights.night, from)))
+    .orderBy(asc(nights.night), asc(nights.observed));
+}
+
+export async function getTranches(db: Db, projectId: number): Promise<(typeof trancheEvents.$inferSelect)[]> {
+  return db.select().from(trancheEvents).where(eq(trancheEvents.projectId, projectId)).orderBy(asc(trancheEvents.trancheIndex));
+}
+
+export async function getProjectByLiveUrl(db: Db, liveUrl: string): Promise<ProjectRow | null> {
+  const [row] = await db.select().from(projects).where(eq(projects.liveUrl, liveUrl)).limit(1);
+  return row ?? null;
+}
+
+export async function setProjectHidden(db: Db, id: number, hidden: boolean): Promise<void> {
+  await db.update(projects).set({ hidden }).where(eq(projects.id, id));
+}
+
+export async function deleteProjectById(db: Db, id: number): Promise<void> {
+  await db.delete(projects).where(eq(projects.id, id));
+}
+
+/**
+ * Community watches created since `since` by the `addedBy` marker (`watch:<ip hash>`), or all `watch:` rows when
+ * `addedBy` is omitted. `beforeId` keeps only earlier rows (reserve-then-verify, like the live-run limiter).
+ */
+export async function countWatches(db: Db, since: Date, addedBy?: string, beforeId?: number): Promise<number> {
+  const conds = [gte(projects.createdAt, since), addedBy ? eq(projects.addedBy, addedBy) : sql`${projects.addedBy} like 'watch:%'`];
+  if (beforeId !== undefined) conds.push(lt(projects.id, beforeId));
+  const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(projects).where(and(...conds));
+  return r?.n ?? 0;
 }

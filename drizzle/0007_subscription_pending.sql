@@ -1,0 +1,1 @@
+ALTER TABLE "subscriptions" ADD COLUMN "pending" boolean DEFAULT false NOT NULL;

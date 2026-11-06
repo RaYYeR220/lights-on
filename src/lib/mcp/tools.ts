@@ -1,0 +1,384 @@
+import { getAddress, isAddress } from 'viem';
+import { z } from 'zod';
+import type { Db } from '@/lib/db';
+import {
+  countWatches, deleteProjectById, getNights, getNightStatuses, getProjectByLiveUrl, getProjectBySlug, getTranches,
+  insertProjectIfNew, listProjects as listProjectRows, setProjectHidden, type NightStatusRow,
+} from '@/lib/db/queries';
+import type { NightRow, ProjectRow } from '@/lib/db/schema';
+import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
+import { safeErrorCode } from '@/lib/net/redact';
+import { validRepo } from '@/lib/adapters/repo';
+import { schemaUid } from '@/lib/attest/eas';
+import { checkBriefingLimit } from '@/lib/briefingLimit';
+import { briefingFor, resolveAddressInput } from '@/lib/briefingService';
+import { clientIp, hashIp } from '@/lib/shift/limits';
+import { nightDate, nightNumber, nightOf, utcDay } from '@/lib/shift/night';
+import { computeRecord } from '@/lib/shift/rules';
+import { siteUrl } from '@/lib/site';
+import type { Record30, Status } from '@/lib/types';
+
+/** Fixed error code + HTTP status; the only error type tool handlers throw on purpose. */
+export class ToolError extends Error {
+  constructor(public code: string, public status: number, public retryAfterSec?: number) {
+    super(code);
+    this.name = 'ToolError';
+  }
+}
+
+export const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+const DAY_MS = 86_400_000;
+const HISTORY_DAYS = 90;
+/** How far back streak/lit30 are computed from (a streak longer than this reads as this long). */
+const RECORD_DAYS = 180;
+const MAX_RANGE_DAYS = 366;
+export const VERIFIED_BY = 'EAS on Base';
+
+// ---- helpers ----
+
+const dayNumber = (n: number) => Date.UTC(Math.floor(n / 10000), Math.floor((n % 10000) / 100) - 1, n % 100) / DAY_MS;
+const fromDayNumber = (d: number) => nightNumber(new Date(d * DAY_MS));
+const validNight = (n: unknown): n is number => {
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 20200101 || n > 20991231) return false;
+  return fromDayNumber(dayNumber(n)) === n;
+};
+const daysBack = (now: Date, days: number) => nightDate(nightNumber(new Date(now.getTime() - days * DAY_MS)));
+
+async function visibleProject(db: Db, slug: string): Promise<ProjectRow> {
+  if (typeof slug !== 'string' || !SLUG.test(slug)) throw new ToolError('not_found', 404);
+  const p = await getProjectBySlug(db, slug);
+  if (!p || p.hidden) throw new ToolError('not_found', 404);
+  return p;
+}
+
+interface Picked { night: number; status: Status; observed: boolean; row: NightStatusRow }
+
+/** Per night, the observed row wins over a reconstructed one. Rows come oldest first. */
+function pickNights(rows: NightStatusRow[]): Picked[] {
+  const by = new Map<string, NightStatusRow>();
+  for (const r of rows) {
+    const cur = by.get(r.night);
+    if (!cur || (r.observed && !cur.observed)) by.set(r.night, r);
+  }
+  return [...by.values()].sort((a, b) => (a.night < b.night ? -1 : 1)).map((r) => ({ night: nightOf(r.night), status: r.status, observed: r.observed, row: r }));
+}
+
+function summarise(picked: Picked[], now: Date) {
+  const record: Record30 = computeRecord(picked.map((p) => ({ night: p.night, status: p.status })), nightNumber(now));
+  // Headline status: the latest observed night; only without any, the latest reconstructed one.
+  const observed = [...picked].reverse().find((p) => p.observed);
+  const head = observed ?? picked[picked.length - 1] ?? null;
+  return { record, head, observed: !!observed };
+}
+
+const reasonsOf = (signals: unknown): string[] => {
+  const r = (signals as { reasons?: unknown } | null)?.reasons;
+  return Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : [];
+};
+
+const evidenceUri = (hash: string | null) => (hash ? `${siteUrl()}/api/v1/evidence/${hash}` : null);
+
+function nightView(r: NightRow) {
+  return {
+    night: nightOf(r.night),
+    observed: r.observed,
+    status: r.status,
+    reasons: reasonsOf(r.signals),
+    summary: r.summary,
+    evidenceHash: r.evidenceHash,
+    evidenceUri: evidenceUri(r.evidenceHash),
+    attestationUid: r.attestationUid,
+    attestTx: r.attestTx,
+  };
+}
+
+// ---- read tools ----
+
+export async function listProjects(db: Db, opts: { history?: boolean } = {}, now: Date = new Date()) {
+  const projs = await listProjectRows(db);
+  const rows = await getNightStatuses(db, projs.map((p) => p.id), daysBack(now, RECORD_DAYS));
+  const byProject = new Map<number, NightStatusRow[]>();
+  for (const r of rows) {
+    const l = byProject.get(r.projectId);
+    if (l) l.push(r);
+    else byProject.set(r.projectId, [r]);
+  }
+  const today = dayNumber(nightNumber(now));
+  return {
+    generatedAt: now.toISOString(),
+    projects: projs.map((p) => {
+      const picked = pickNights(byProject.get(p.id) ?? []);
+      const { record, head, observed } = summarise(picked, now);
+      const out: Record<string, unknown> = {
+        slug: p.slug, name: p.name, tagline: p.tagline, source: p.source, bay: p.bay,
+        status: head?.status ?? null,
+        ...(head && !observed ? { statusSource: 'reconstructed' } : {}),
+        confirmedAt: observed && head ? head.row.createdAt.toISOString() : null,
+        summary: observed && head ? head.row.summary : null,
+        record,
+      };
+      if (opts.history) {
+        const byNight = new Map(picked.map((x) => [dayNumber(x.night), x.status]));
+        out.history = Array.from({ length: HISTORY_DAYS }, (_, i) => byNight.get(today - (HISTORY_DAYS - 1 - i)) ?? null);
+      }
+      return out as unknown as ProjectListItem;
+    }),
+  };
+}
+
+export interface ProjectListItem {
+  slug: string; name: string; tagline: string | null; source: ProjectRow['source']; bay: number | null;
+  status: Status | null; statusSource?: 'reconstructed'; confirmedAt: string | null; summary: string | null;
+  record: Record30; history?: (Status | null)[];
+}
+
+export async function getProject(db: Db, slug: string, now: Date = new Date()) {
+  const p = await visibleProject(db, slug);
+  const rows = await getNights(db, p.id, { from: daysBack(now, RECORD_DAYS) });
+  const picked = pickNights(rows.map((r) => ({
+    projectId: r.projectId, night: r.night, status: r.status, observed: r.observed, summary: r.summary,
+    createdAt: r.createdAt, evidenceHash: r.evidenceHash, attestationUid: r.attestationUid,
+  })));
+  const { record, head, observed } = summarise(picked, now);
+  const headRow = head ? rows.find((r) => r.night === head.row.night && r.observed === head.observed) ?? null : null;
+
+  let vibestarter: unknown = null;
+  if (p.vibestarter) {
+    const tr = await getTranches(db, p.id);
+    const open = tr.find((t) => t.windowEndsAt && t.windowEndsAt.getTime() > now.getTime()) ?? null;
+    vibestarter = {
+      campaignId: p.vibestarter.campaignId,
+      escrow: p.vibestarter.escrow,
+      tranches: tr.map((t) => ({
+        index: t.trancheIndex,
+        requestedAt: t.requestedAt?.toISOString() ?? null,
+        windowEndsAt: t.windowEndsAt?.toISOString() ?? null,
+        amountWei: t.amountWei,
+      })),
+      openWindow: open ? { index: open.trancheIndex, windowEndsAt: open.windowEndsAt?.toISOString() ?? null } : null,
+    };
+  }
+  return {
+    slug: p.slug, name: p.name, tagline: p.tagline, category: p.category, source: p.source, bay: p.bay,
+    liveUrl: p.liveUrl, repoHost: p.repoHost, repo: p.repo,
+    contracts: p.contracts ?? [],
+    claimed: !!p.claimVerifiedAt,
+    status: head?.status ?? null,
+    ...(head && !observed ? { statusSource: 'reconstructed' as const } : {}),
+    record,
+    latestNight: headRow ? nightView(headRow) : null,
+    vibestarter,
+  };
+}
+
+export async function getNight(db: Db, slug: string, night: number) {
+  const p = await visibleProject(db, slug);
+  if (!validNight(night)) throw new ToolError('bad_request', 400);
+  const rows = await getNights(db, p.id, { from: nightDate(night), to: nightDate(night) });
+  const row = rows.find((r) => r.observed) ?? rows[0];
+  if (!row) throw new ToolError('night_not_found', 404);
+  return { slug: p.slug, ...nightView(row) };
+}
+
+export async function getProjectNights(
+  db: Db, slug: string, range: { from?: number; to?: number } = {}, now: Date = new Date(),
+) {
+  const p = await visibleProject(db, slug);
+  const to = range.to ?? nightNumber(now);
+  const from = range.from ?? fromDayNumber(dayNumber(to) - (HISTORY_DAYS - 1));
+  if (!validNight(to) || !validNight(from) || from > to) throw new ToolError('bad_request', 400);
+  const fromClamped = Math.max(from, fromDayNumber(dayNumber(to) - (MAX_RANGE_DAYS - 1)));
+  const rows = await getNights(db, p.id, { from: nightDate(fromClamped), to: nightDate(to) });
+  return { slug: p.slug, from: fromClamped, to, nights: rows.map(nightView) };
+}
+
+export async function isStillShipping(db: Db, slug: string, now: Date = new Date()) {
+  const p = await visibleProject(db, slug);
+  const rows = await getNightStatuses(db, [p.id], daysBack(now, RECORD_DAYS));
+  const picked = pickNights(rows);
+  const { record, head } = summarise(picked, now);
+  return {
+    slug: p.slug,
+    status: head?.status ?? null,
+    streak: record.streak,
+    lit30: record.lit30,
+    lastShip: record.lastShip,
+    lastNight: head?.night ?? null,
+    attestationUid: head?.row.attestationUid ?? null,
+    verifiedBy: VERIFIED_BY,
+    schemaUid: schemaUid(),
+  };
+}
+
+export async function getBriefing(db: Db, rawAddress: string, headers?: Headers) {
+  if (headers) {
+    const wait = checkBriefingLimit(headers);
+    if (wait !== null) throw new ToolError('rate_limited', 429, wait);
+  }
+  const raw = String(rawAddress ?? '').trim();
+  const r = await resolveAddressInput(raw);
+  if ('error' in r) throw new ToolError(r.error, r.status);
+  return briefingFor(db, r.address);
+}
+
+// ---- watch ----
+
+export const watchInput = z.object({
+  liveUrl: z.string().min(1).max(2048),
+  repo: z.string().min(1).max(300).optional(),
+  contract: z.string().min(1).max(100).optional(),
+});
+export type WatchInput = z.infer<typeof watchInput>;
+
+export const WATCH_LIMITS = { perIpPerDay: 3, globalPerDay: 50, attempts: 20, attemptWindowMs: 10 * 60_000 } as const;
+
+export interface WatchCtx {
+  headers: Headers;
+  now?: () => Date;
+  /** Test seam; defaults to the SSRF-guarded safeFetch. */
+  fetch?: (url: string) => Promise<SafeFetchResult>;
+  /** Runs the first shift after the response; defaults to next's `after()`. */
+  schedule?: (p: Promise<unknown>) => void;
+  /** Test seam for the first run itself. */
+  runFirst?: (project: ProjectRow) => Promise<void>;
+}
+
+// Per-instance guard on validation attempts (each one makes an outbound request); the durable daily caps are in the DB.
+const attempts = new Map<string, number[]>();
+export function resetWatchLimit(): void { attempts.clear(); }
+function attemptAllowed(key: string, nowMs: number): boolean {
+  const recent = (attempts.get(key) ?? []).filter((t) => nowMs - t < WATCH_LIMITS.attemptWindowMs);
+  if (recent.length >= WATCH_LIMITS.attempts) { attempts.set(key, recent); return false; }
+  recent.push(nowMs);
+  attempts.set(key, recent);
+  if (attempts.size > 5000) attempts.delete(attempts.keys().next().value as string);
+  return true;
+}
+
+/** `owner/name`, or a github.com / gitlab.com URL -> {host, repo}; null when it is neither or fails validRepo. */
+export function parseRepoInput(raw: string): { host: 'github' | 'gitlab'; repo: string } | null {
+  const s = raw.trim();
+  let host: 'github' | 'gitlab' = 'github';
+  let parts: string[];
+  if (/^https?:\/\//i.test(s)) {
+    let u: URL;
+    try { u = new URL(s); } catch { return null; }
+    const h = u.hostname.toLowerCase().replace(/^www\./, '');
+    if (h === 'github.com') host = 'github';
+    else if (h === 'gitlab.com') host = 'gitlab';
+    else return null;
+    parts = u.pathname.split('/').filter(Boolean);
+    const dash = parts.indexOf('-');
+    if (dash >= 0) parts = parts.slice(0, dash);
+    if (host === 'github') parts = parts.slice(0, 2);
+  } else {
+    parts = s.split('/');
+  }
+  if (parts.length > 0) parts[parts.length - 1] = parts[parts.length - 1].replace(/\.git$/i, '');
+  const repo = parts.join('/');
+  return validRepo({ host, repo }) ? { host, repo } : null;
+}
+
+function slugFromUrl(u: URL): string {
+  const host = u.hostname.toLowerCase().replace(/^www\./, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return (host || 'site').slice(0, 70);
+}
+
+const untilUtcMidnight = (now: Date) =>
+  Math.max(1, Math.ceil((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - now.getTime()) / 1000));
+
+async function defaultSchedule(p: Promise<unknown>): Promise<void> {
+  try {
+    const { after } = await import('next/server');
+    after(p);
+  } catch {
+    // outside a request scope: the promise simply keeps running
+  }
+}
+
+async function defaultRunFirst(db: Db, project: ProjectRow): Promise<void> {
+  const [{ makeShiftDeps }, { runProject, liveWindow }] = await Promise.all([import('@/lib/shift/deps'), import('@/lib/shift/run')]);
+  const deps = makeShiftDeps(db, { kind: 'live' });
+  const window = await liveWindow(db, project.id, deps.now());
+  const r = await runProject(project.id, 'live', window, deps);
+  if (r.status !== 'unavailable') await setProjectHidden(db, project.id, false);
+}
+
+/**
+ * Add a community project: validate (SSRF-guarded fetch), rate-limit (DB-backed: 3/day per IP hash, 50/day global,
+ * counted on the projects table by `added_by = watch:<ip hash>`), insert hidden, then run the first shift after the
+ * response. The project is unhidden only if that run finishes with a claim; otherwise it stays hidden.
+ */
+export async function watchProject(db: Db, input: unknown, ctx: WatchCtx): Promise<{ slug: string; status: 'queued' | 'exists' }> {
+  const secret = process.env.INTERNAL_RUN_TOKEN;
+  if (!secret) throw new ToolError('misconfigured', 503);
+  const now = ctx.now?.() ?? new Date();
+  const parsed = watchInput.safeParse(input);
+  if (!parsed.success) throw new ToolError('bad_request', 400);
+  const { liveUrl, repo, contract } = parsed.data;
+
+  const ipHash = hashIp(clientIp(ctx.headers), utcDay(now), secret);
+  if (!attemptAllowed(ipHash, now.getTime())) throw new ToolError('rate_limited', 429, 60);
+
+  let url: URL;
+  try { url = new URL(liveUrl); } catch { throw new ToolError('invalid_url', 400); }
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new ToolError('invalid_url', 400);
+  url.hash = '';
+  const normalized = url.toString();
+
+  let repoRef: { host: 'github' | 'gitlab'; repo: string } | null = null;
+  if (repo !== undefined) {
+    repoRef = parseRepoInput(repo);
+    if (!repoRef) throw new ToolError('invalid_repo', 400);
+  }
+  let contractAddr: string | null = null;
+  if (contract !== undefined) {
+    if (!isAddress(contract, { strict: false })) throw new ToolError('invalid_contract', 400);
+    contractAddr = getAddress(contract);
+  }
+
+  const existing = await getProjectByLiveUrl(db, normalized);
+  if (existing) return { slug: existing.slug, status: 'exists' };
+
+  // The site must answer (any HTTP response below 500; 401/403/429 mean "blocking us", still alive).
+  try {
+    const res = await (ctx.fetch ?? ((u: string) => safeFetch(u, { timeoutMs: 8000, maxBytes: 64 * 1024 })))(normalized);
+    if (res.status >= 500) throw new ToolError('unreachable', 400);
+  } catch (e) {
+    if (e instanceof ToolError) throw e;
+    throw new ToolError(safeErrorCode(e) === 'blocked_url' ? 'blocked_url' : 'unreachable', 400);
+  }
+
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const marker = `watch:${ipHash}`;
+  const over = async (beforeId?: number): Promise<boolean> =>
+    (await countWatches(db, dayStart, marker, beforeId)) >= WATCH_LIMITS.perIpPerDay
+    || (await countWatches(db, dayStart, undefined, beforeId)) >= WATCH_LIMITS.globalPerDay;
+  if (await over()) throw new ToolError('rate_limited', 429, untilUtcMidnight(now));
+
+  // Reserve-then-verify: a concurrent loser deletes its row.
+  const base = slugFromUrl(url);
+  let row: ProjectRow | null = null;
+  for (let i = 1; i <= 20 && !row; i++) {
+    const slug = i === 1 ? base : `${base.slice(0, 75)}-${i}`;
+    row = await insertProjectIfNew(db, {
+      slug, name: url.hostname.replace(/^www\./, ''), tagline: null, source: 'community', liveUrl: normalized,
+      repoHost: repoRef?.host ?? null, repo: repoRef?.repo ?? null,
+      contracts: contractAddr ? [{ chainId: 8453, address: contractAddr, role: 'watched' }] : null,
+      addedBy: marker, hidden: true, createdAt: now,
+    });
+  }
+  if (!row) throw new ToolError('internal', 500);
+  if (await over(row.id)) {
+    await deleteProjectById(db, row.id);
+    throw new ToolError('rate_limited', 429, untilUtcMidnight(now));
+  }
+
+  const created = row;
+  const job = (ctx.runFirst ? ctx.runFirst(created) : defaultRunFirst(db, created)).catch((e) => {
+    console.error('watch first run failed:', safeErrorCode(e)); // project stays hidden
+  });
+  if (ctx.schedule) ctx.schedule(job);
+  else await defaultSchedule(job);
+  return { slug: created.slug, status: 'queued' };
+}

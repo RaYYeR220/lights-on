@@ -50,6 +50,34 @@
       "when": 1793951869427,
       "tag": "0006_backfill_endpoint_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793952964602,
+      "tag": "0007_subscription_pending",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793953407853,
+      "tag": "0008_claim_nonces",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793954004509,
+      "tag": "0009_project_bays",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793954889072,
+      "tag": "0010_claim_nonce_address",
+      "breakpoints": true
     }
   ]
 }

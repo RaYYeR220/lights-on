@@ -36,6 +36,8 @@ export const projects = pgTable('projects', {
   addedBy: text('added_by'),
   createdAt: tsz('created_at').notNull().defaultNow(),
   hidden: boolean('hidden').notNull().default(false),
+  /** Stable window position in the tower: assigned once (max+1) when the project is created, never changed. */
+  bay: integer('bay').unique(),
 }, () => [check('projects_source_chk', inList('source', SOURCES))]);
 
 export const shifts = pgTable('shifts', {
@@ -143,6 +145,8 @@ export const subscriptions = pgTable('subscriptions', {
   ipHash: text('ip_hash'),
   /** Last on-demand AI briefing (1 per chat per hour). */
   aiBriefAt: tsz('ai_brief_at'),
+  /** Webpush reservation not yet confirmed by the push service; senders skip these rows. */
+  pending: boolean('pending').notNull().default(false),
 }, (t) => [
   check('subscriptions_channel_chk', inList('channel', CHANNELS)),
   uniqueIndex('subscriptions_channel_target_uq').on(t.channel, t.target),
@@ -159,6 +163,18 @@ export const founderNotes = pgTable('founder_notes', {
   signature: text('signature').notNull(),
   createdAt: tsz('created_at').notNull().defaultNow(),
 });
+
+/** Single-use SIWE nonces for founder claim / notes / draft (only the sha256 is stored). */
+export const claimNonces = pgTable('claim_nonces', {
+  nonceHash: text('nonce_hash').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  purpose: text('purpose').notNull(),
+  /** Lowercase wallet the nonce was issued to; only that wallet may sign with it. */
+  address: text('address').notNull().default(''),
+  expiresAt: tsz('expires_at').notNull(),
+  usedAt: tsz('used_at'),
+  createdAt: tsz('created_at').notNull().defaultNow(),
+}, (t) => [index('claim_nonces_expires_idx').on(t.expiresAt)]);
 
 export const budget = pgTable('budget', {
   day: date('day', { mode: 'string' }).primaryKey(),

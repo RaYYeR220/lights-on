@@ -71,6 +71,7 @@ export async function onShiftFinalized(shiftId: number, deps: NotifyDeps): Promi
       .where(and(
         or(isNull(subscriptions.lastSentAt), lt(subscriptions.lastSentAt, threshold)),
         or(...channels.map((c) => eq(subscriptions.channel, c))),
+        eq(subscriptions.pending, false),
         seen.length ? notInArray(subscriptions.id, seen) : undefined,
       ))
       .orderBy(sql`${subscriptions.lastSentAt} asc nulls first`, asc(subscriptions.id))

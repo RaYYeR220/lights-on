@@ -4,10 +4,11 @@ import { makeTestDb } from '../helpers/db';
 import { seedProject } from '../helpers/shift';
 import { insertNight, createNightlyShift, updateShift } from '@/lib/db/queries';
 import { subscriptions, trancheEvents } from '@/lib/db/schema';
+import { hashIp } from '@/lib/shift/limits';
 import { getDb, type Db } from '@/lib/db';
 import path from 'node:path';
 import { migrate } from 'drizzle-orm/pglite/migrator';
-import { normalizeEndpoint, PushSubscriptionSchema, vapidSubject, isAllowedPushEndpoint, endpointHash, pushHooks } from '@/lib/notify/webpush';
+import { normalizeEndpoint, PushSubscriptionSchema, vapidSubject, isAllowedPushEndpoint, endpointHash, pushHooks, attemptLimiter } from '@/lib/notify/webpush';
 import { buildBriefing, templateBriefing, type BriefingProject } from '@/lib/notify/briefing';
 import { encodeStartToken, handleTelegramUpdate, parseCommand, HELP_TEXT } from '@/lib/notify/telegram';
 import { onShiftFinalized } from '@/lib/notify/send';
@@ -463,6 +464,7 @@ describe('verified, normalised push subscriptions', () => {
     process.env.DATABASE_URL = 'pglite://memory';
     process.env.INTERNAL_RUN_TOKEN = 'salt-token';
     await db.delete(subscriptions);
+    attemptLimiter.reset();
     return db;
   };
 
@@ -514,5 +516,70 @@ describe('verified, normalised push subscriptions', () => {
     });
     await subscribeDELETE(req('https://fcm.googleapis.com/fcm/send/old', 'DELETE'));
     expect(await db.select().from(subscriptions)).toHaveLength(0);
+  });
+});
+
+describe('reserve before confirm, count attempts', () => {
+  const keys = { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) };
+  const IP = '198.18.0.5';
+  const req = (n: number) => new Request('http://localhost/api/push/subscribe', {
+    method: 'POST', headers: { 'x-real-ip': IP },
+    body: JSON.stringify({ subscription: { endpoint: `https://fcm.googleapis.com/fcm/send/r${n}`, keys }, addresses: [ADDR] }),
+  });
+  const fresh = async () => {
+    const db = await getDb('pglite://memory');
+    await migrate(db as never, { migrationsFolder: path.resolve(__dirname, '../../drizzle') });
+    process.env.DATABASE_URL = 'pglite://memory';
+    process.env.INTERNAL_RUN_TOKEN = 'salt-token';
+    await db.delete(subscriptions);
+    attemptLimiter.reset();
+    return db;
+  };
+
+  it('two concurrent subscribes at the limit edge: only one passes', async () => {
+    const db = await fresh();
+    const ipHash = hashIp(IP, 'push-subscribe', 'salt-token');
+    await db.insert(subscriptions).values(Array.from({ length: 4 }, (_, i) => ({
+      channel: 'webpush' as const, target: `{"i":${i}}`, endpointHash: `h${i}`, ipHash, addresses: [ADDR],
+    })));
+    const saved = pushHooks.confirm;
+    pushHooks.confirm = async () => { await new Promise((r) => setTimeout(r, 50)); return { ok: true }; };
+    try {
+      const rs = await Promise.all([subscribePOST(req(1)), subscribePOST(req(2))]);
+      expect(rs.map((r) => r.status).sort()).toEqual([200, 429]);
+      expect(await db.select().from(subscriptions)).toHaveLength(5);
+      expect((await db.select().from(subscriptions)).some((r) => r.pending)).toBe(false);
+    } finally { pushHooks.confirm = saved; }
+  });
+
+  it('a failed confirmation leaves no row; the 11th attempt in an hour gets 429 without sending', async () => {
+    const db = await fresh();
+    const confirm = vi.fn(async () => ({ ok: false as const, gone: true, code: 'http_410' }));
+    const saved = pushHooks.confirm;
+    pushHooks.confirm = confirm;
+    try {
+      for (let i = 1; i <= 10; i++) expect((await subscribePOST(req(i))).status).toBe(400);
+      expect(await db.select().from(subscriptions)).toHaveLength(0);
+      expect((await subscribePOST(req(11))).status).toBe(429);
+      expect(confirm).toHaveBeenCalledTimes(10);
+    } finally { pushHooks.confirm = saved; }
+  });
+
+  it('the global per-instance cap also returns 429', () => {
+    attemptLimiter.reset();
+    for (let i = 0; i < 300; i++) expect(attemptLimiter.take(`ip${i}`)).toBe(true);
+    expect(attemptLimiter.take('another')).toBe(false);
+    attemptLimiter.reset();
+  });
+
+  it('the sender skips pending rows', async () => {
+    const { db, a, shift } = await setup();
+    const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/p1', keys };
+    await db.insert(subscriptions).values({ channel: 'webpush', target: JSON.stringify(sub), projectIds: [a.id], pending: true });
+    const sendWebPush = vi.fn(async () => ({ ok: true as const }));
+    expect(await onShiftFinalized(shift.id, { db, sendWebPush, sleep: async () => {} })).toEqual({ sent: 0, skipped: 0, failed: 0 });
+    expect(sendWebPush).not.toHaveBeenCalled();
+    await db.update(subscriptions).set({ pending: false });
+    expect((await onShiftFinalized(shift.id, { db, sendWebPush, sleep: async () => {} })).sent).toBe(1);
   });
 });
