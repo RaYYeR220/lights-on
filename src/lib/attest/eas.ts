@@ -21,6 +21,21 @@ export interface AttestDeps {
   publicClient: AnyPublicClient;
   /** Pre-bound by the caller: true = wei reserved against the daily gas cap, false = over cap. */
   budget: (weiAmount: bigint) => Promise<boolean>;
+  /**
+   * Optional refund of a reservation. Called ONLY for failures before broadcast (the tx was never sent, e.g. signing
+   * or submission rejected). Once a tx hash exists the reservation is kept, even if the tx later reverts.
+   * Estimate/fee-read failures happen before anything is reserved, so they need no release.
+   */
+  release?: (weiAmount: bigint) => Promise<void>;
+}
+
+export const MIN_TIP_WEI = 1_000_000n; // 0.001 gwei
+export const MAX_TIP_WEI = 10_000_000n; // 0.01 gwei
+
+/** tip = clamp(estimatedTip, 0.001, 0.01 gwei); maxFee = 2 x baseFee + tip. */
+export function computeFees(baseFee: bigint, estimatedTip: bigint) {
+  const tip = estimatedTip < MIN_TIP_WEI ? MIN_TIP_WEI : estimatedTip > MAX_TIP_WEI ? MAX_TIP_WEI : estimatedTip;
+  return { maxPriorityFeePerGas: tip, maxFeePerGas: 2n * baseFee + tip };
 }
 
 const PARAMS = parseAbiParameters(SCHEMA);
@@ -54,12 +69,21 @@ async function send(
   if (!wallet) return { skipped: 'disabled' };
   try {
     const base = { address: EAS_ADDRESS, abi: easAbi, account: wallet.account, ...call } as never;
-    const gas = await publicClient.estimateContractGas(base);
-    const fees = await publicClient.estimateFeesPerGas();
-    const maxFee = fees.maxFeePerGas ?? fees.gasPrice;
-    if (maxFee === undefined) return { skipped: 'error', error: 'error' };
-    if (!(await deps.budget(gas * maxFee))) return { skipped: 'gas_cap' };
-    const txHash = await wallet.writeContract({ ...(base as object), chain: wallet.chain, gas, maxFeePerGas: maxFee } as never);
+    const estimate = await publicClient.estimateContractGas(base);
+    const gas = (estimate * 12n) / 10n;
+    const block = await publicClient.getBlock({ blockTag: 'latest' });
+    if (block.baseFeePerGas == null) return { skipped: 'error', error: 'error' };
+    const tipEstimate = await publicClient.estimateMaxPriorityFeePerGas();
+    const { maxFeePerGas, maxPriorityFeePerGas } = computeFees(block.baseFeePerGas, tipEstimate);
+    const reserved = gas * maxFeePerGas;
+    if (!(await deps.budget(reserved))) return { skipped: 'gas_cap' };
+    let txHash: Hex;
+    try {
+      txHash = await wallet.writeContract({ ...(base as object), chain: wallet.chain, gas, maxFeePerGas, maxPriorityFeePerGas } as never);
+    } catch (e) {
+      await deps.release?.(reserved).catch(() => undefined); // never broadcast: refund
+      return { skipped: 'error', error: safeErrorCode(e) };
+    }
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
     if (receipt.status !== 'success') return { skipped: 'error', error: 'reverted' };
     return { txHash, logs: receipt.logs as unknown as Logs };
