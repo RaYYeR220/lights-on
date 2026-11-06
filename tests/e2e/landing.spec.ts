@@ -123,7 +123,7 @@ test.describe("linked pages exist", () => {
   for (const [path, heading] of [
     ["/night", "Last night's shift"],
     ["/methodology", "How a night is decided"],
-    ["/docs", "Docs"],
+    ["/docs", "Read it from your own code"],
     ["/b", "Check your bags"],
     ["/add", "Add a project to the watch"],
   ] as const) {

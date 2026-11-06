@@ -7,6 +7,11 @@ import { NightShift } from "@/components/night/NightShift";
 
 export const revalidate = 300;
 
+/** None at build time: each page is rendered on its first request, then cached and revalidated (ISR). */
+export async function generateStaticParams() {
+  return [];
+}
+
 export async function generateMetadata({ params }: PageProps<"/night/[date]">): Promise<Metadata> {
   const n = parseNightParam((await params).date);
   return { title: n ? `Night of ${nightLabel(n, true)} · Lights On` : "Not found · Lights On" };

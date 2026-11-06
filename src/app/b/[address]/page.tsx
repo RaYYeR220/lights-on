@@ -95,7 +95,7 @@ export default async function BackerPage({ params }: PageProps<"/b/[address]">) 
           {view.address}
         </a>
       </p>
-      <h1 className="h-page rv d1">Bags of {shortAddress(view.address)}</h1>
+      <h1 className="h-page rv d1">Bags of {shortAddress(view.address.toLowerCase())}</h1>
       <p className="lede rv d1">
         {n
           ? `${n} watched project${n === 1 ? "" : "s"} for this wallet: Vibestarter campaigns it backed and watched tokens it holds.`

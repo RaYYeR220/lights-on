@@ -13,6 +13,11 @@ import s from "@/components/project/project.module.css";
 /** ISR: a project page is rebuilt from the DB at most every 5 minutes. */
 export const revalidate = 300;
 
+/** None at build time: each page is rendered on its first request, then cached and revalidated (ISR). */
+export async function generateStaticParams() {
+  return [];
+}
+
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 async function load(slug: string): Promise<ProjectView | null> {
