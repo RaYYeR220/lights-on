@@ -14,15 +14,28 @@ export class DuplicateNight extends Error {
   }
 }
 
+/**
+ * Insert or update by slug. A NEW project gets the next free `bay` (max+1); an existing project keeps its bay
+ * (`bay` is never part of the update set). Concurrent creators can pick the same number: the unique constraint
+ * rejects the loser, which simply retries with a fresh max.
+ */
 export async function upsertProject(db: Db, p: NewProject): Promise<ProjectRow> {
-  const { slug, ...rest } = p;
-  const [row] = await db
-    .insert(projects)
-    .values(p)
-    .onConflictDoUpdate({ target: projects.slug, set: rest })
-    .returning();
-  if (!row) throw new Error(`upsertProject failed for ${slug}`);
-  return row;
+  const { slug, bay: _ignored, ...rest } = p;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const [row] = await db
+        .insert(projects)
+        .values({ ...rest, slug, bay: sql<number>`(select coalesce(max(${projects.bay}), 0) + 1 from ${projects})` })
+        .onConflictDoUpdate({ target: projects.slug, set: rest })
+        .returning();
+      if (!row) throw new Error(`upsertProject failed for ${slug}`);
+      return row;
+    } catch (e) {
+      const code = (e as { code?: string; cause?: { code?: string } })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
+      if (code === '23505' && attempt < 5) continue;
+      throw e;
+    }
+  }
 }
 
 export async function getProjectBySlug(db: Db, slug: string): Promise<ProjectRow | null> {

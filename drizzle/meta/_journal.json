@@ -64,6 +64,13 @@
       "when": 1793953407853,
       "tag": "0008_claim_nonces",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793954004509,
+      "tag": "0009_project_bays",
+      "breakpoints": true
     }
   ]
 }
