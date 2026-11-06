@@ -501,8 +501,10 @@ export class TowerEngine {
     let left: number;
     let top: number;
     if (G.mobile) {
-      top = wy - chh - 12;
-      if (top < top0) top = wy + wh + 14;
+      // above the window when that stays on screen under the nav, else below it
+      const fr = this.els.facade.getBoundingClientRect();
+      const above = wy - chh - 12;
+      top = fr.top + above >= 72 ? above : wy + wh + 14;
       left = 16;
     } else {
       left = wx + ww + 22;

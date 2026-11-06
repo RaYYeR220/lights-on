@@ -125,7 +125,7 @@ export function computeGeometry(input: GeometryInput): Geometry {
 
 /** Rail height before it is measured: one line on desktop, two stacked lines at <= 640px. */
 export const RAIL_H_DESKTOP = 28;
-export const RAIL_H_MOBILE = 42;
+export const RAIL_H_MOBILE = 38;
 
 /** Bays in the building: at least 12 x 8, always some open, a multiple of 24 so 4, 8 and 12 columns fill evenly. */
 export function baysFor(projects: number): number {

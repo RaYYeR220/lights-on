@@ -96,11 +96,11 @@ export default async function Home() {
           </p>
           <HeroCtas className={`${s.ctas} rv d2`} />
           <p className={`${s.proof} rv d3`}>
-            {data ? <Proof data={data} /> : <span>The building is being lit. Check back in a few minutes.</span>}
+            {data ? <Proof data={data} /> : <span>Last night&apos;s readings are not available right now.</span>}
             <Legend withNone={withNone} />
           </p>
         </div>
-        {model ? <Tower model={model} /> : <p className={s.down}>Last night&apos;s readings could not be loaded just now.</p>}
+        {model ? <Tower model={model} /> : <p className={s.down}>The building could not be loaded. It is rebuilt every 5 minutes, so try again shortly.</p>}
       </section>
     </main>
   );
