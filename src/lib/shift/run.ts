@@ -2,7 +2,7 @@ import type { Hex } from 'viem';
 import type { Db } from '@/lib/db';
 import {
   DuplicateNight, getLastSnapshot, getLatestNightly, getNightlyShift, getNights, getProjectById, getShift,
-  insertLiveRun, insertNight, markShiftRunDone, saveEvidence, saveSnapshot, updateLiveRun,
+  insertLiveRun, insertNight, markShiftRunDone, saveEvidence, saveSnapshot, updateLiveRun, upsertTrancheEvents,
 } from '@/lib/db/queries';
 import type { ProjectRow } from '@/lib/db/schema';
 import { safeErrorCode } from '@/lib/net/redact';
@@ -280,6 +280,20 @@ function signalsOf(b: EvidenceBundle, d: Decision, ex: Explanation): Record<stri
   };
 }
 
+/**
+ * Keep the campaign's tranche schedule (challenge windows) in `tranche_events` for the briefings and the open API.
+ * Best effort: a failed write never fails the run; the readers then fall back to the latest evidence.
+ */
+async function recordTranches(db: Db, projectId: number, b: EvidenceBundle): Promise<void> {
+  const v = b.sources.vibestarter;
+  if (!v?.ok || !v.facts || !Array.isArray(v.facts.tranches) || v.facts.tranches.length === 0) return;
+  try {
+    await upsertTrancheEvents(db, projectId, v.facts.tranches);
+  } catch (e) {
+    console.error('shift.tranches failed:', safeErrorCode(e));
+  }
+}
+
 function attestDetail(o: AttestOutcome): string {
   if ('uid' in o) return `attested · uid ${short(o.uid)}`;
   if (o.txHash && o.error !== 'reverted') return `sent, not confirmed yet · tx ${short(o.txHash)}`;
@@ -291,7 +305,8 @@ function attestDetail(o: AttestOutcome): string {
 /**
  * One project through the pipeline: adapters (parallel, isolated) -> bundle -> rules -> explain -> evidence.
  * Nightly: writes the `nights` row (throws DuplicateNight if the project-night exists; nothing else is written
- * then) and only afterwards advances the snapshots. Live: never writes nights or snapshots; updates its
+ * then) and only afterwards advances the snapshots and the tranche schedule. Live: never writes nights or snapshots
+ * (it does refresh the tranche schedule); updates its
  * `live_runs` row and attests once (a skipped attestation still ends `done`).
  */
 export async function runProject(
@@ -347,6 +362,7 @@ export async function runProject(
         signals: signalsOf(bundle, decision, ex), summary: ex.summary, notable: ex.notable,
         evidenceHash, aiModel: ex.model, aiOk: ex.aiOk,
       });
+      await recordTranches(db, projectId, bundle);
       // The row is ours: only now advance the diff baselines (a duplicate run must not move them).
       const live = bundle.sources.liveapp;
       if (live?.ok && live.facts?.up) {
@@ -363,6 +379,7 @@ export async function runProject(
       return { night, status: decision.status, evidenceHash, nightId: row.id };
     }
 
+    await recordTranches(db, projectId, bundle);
     step('attest', 'start');
     const history = await getNights(db, projectId, { from: lit30From(night) });
     const att = toAttestation(

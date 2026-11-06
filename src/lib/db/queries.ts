@@ -5,7 +5,7 @@ import {
   type ProjectRow, type NewProject, type NightRow, type NewNight, type LiveRunRow, type NewLiveRun, type SnapshotRow,
   type ShiftRow,
 } from './schema';
-import type { EvidenceBundle } from '@/lib/types';
+import type { EvidenceBundle, TrancheFact } from '@/lib/types';
 
 export class DuplicateNight extends Error {
   constructor(projectId: number, night: string, observed: boolean) {
@@ -520,18 +520,101 @@ export async function deleteReconstructedGitNightsBefore(db: Db, projectId: numb
   return rows.length;
 }
 
+// ---- tranches (challenge windows) ----
+
+export type TrancheRow = typeof trancheEvents.$inferSelect;
+
+/**
+ * Record a campaign's tranche schedule as read by the vibestarter adapter: one row per (project, tranche index), one
+ * statement. The window end follows the latest read; a request time or paid amount once seen is never erased by a
+ * read that lacks it. `alerted` is left alone.
+ */
+export async function upsertTrancheEvents(db: Db, projectId: number, tranches: TrancheFact[]): Promise<number> {
+  const date = (v: string | null) => {
+    const t = v ? Date.parse(v) : NaN;
+    return Number.isFinite(t) ? new Date(t) : null;
+  };
+  const byIndex = new Map<number, TrancheFact>();
+  for (const t of tranches) if (Number.isInteger(t.index) && t.index >= 0 && t.index < 1000) byIndex.set(t.index, t);
+  if (byIndex.size === 0) return 0;
+  const rows = await db
+    .insert(trancheEvents)
+    .values([...byIndex.values()].map((t) => ({
+      projectId,
+      trancheIndex: t.index,
+      requestedAt: date(t.requestedAt),
+      windowEndsAt: date(t.windowEndsAt),
+      amountWei: t.amountPaidWei && /^\d{1,78}$/.test(t.amountPaidWei) ? t.amountPaidWei : null,
+    })))
+    .onConflictDoUpdate({
+      target: [trancheEvents.projectId, trancheEvents.trancheIndex],
+      set: {
+        requestedAt: sql`COALESCE(excluded.requested_at, ${trancheEvents.requestedAt})`,
+        windowEndsAt: sql`excluded.window_ends_at`,
+        amountWei: sql`COALESCE(excluded.amount_wei, ${trancheEvents.amountWei})`,
+      },
+    })
+    .returning({ i: trancheEvents.trancheIndex });
+  return rows.length;
+}
+
+/**
+ * Tranche schedules of several projects, by project, index ascending. From `tranche_events` (written by every shift
+ * run); a project with no rows there yet falls back to the tranches in its latest evidence bundle with a readable
+ * vibestarter source.
+ */
+export async function getTrancheSchedules(db: Db, ids: number[]): Promise<Map<number, TrancheRow[]>> {
+  const out = new Map<number, TrancheRow[]>();
+  const uniq = [...new Set(ids)];
+  if (uniq.length === 0) return out;
+  const rows = await db.select().from(trancheEvents)
+    .where(inArray(trancheEvents.projectId, uniq))
+    .orderBy(asc(trancheEvents.projectId), asc(trancheEvents.trancheIndex));
+  for (const r of rows) out.set(r.projectId, [...(out.get(r.projectId) ?? []), r]);
+  const missing = uniq.filter((id) => !out.has(id));
+  if (missing.length === 0) return out;
+  const res = await db.execute(sql`
+    SELECT DISTINCT ON (e.project_id) e.project_id AS "projectId", e.bundle #> '{sources,vibestarter,facts,tranches}' AS tranches
+    FROM evidence e
+    WHERE e.project_id IN (${sql.join(missing.map((id) => sql`${id}`), sql`, `)})
+      AND e.bundle #>> '{sources,vibestarter,ok}' = 'true'
+      AND jsonb_typeof(e.bundle #> '{sources,vibestarter,facts,tranches}') = 'array'
+    ORDER BY e.project_id, e.night DESC`);
+  const date = (v: unknown) => {
+    const t = typeof v === 'string' ? Date.parse(v) : NaN;
+    return Number.isFinite(t) ? new Date(t) : null;
+  };
+  for (const r of (res as unknown as { rows: { projectId: number; tranches: unknown }[] }).rows) {
+    const list = (Array.isArray(r.tranches) ? r.tranches : [])
+      .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object' && Number.isInteger((t as { index?: unknown }).index))
+      .map((t): TrancheRow => ({
+        projectId: Number(r.projectId),
+        trancheIndex: t.index as number,
+        requestedAt: date(t.requestedAt),
+        windowEndsAt: date(t.windowEndsAt),
+        amountWei: typeof t.amountPaidWei === 'string' && /^\d{1,78}$/.test(t.amountPaidWei) ? t.amountPaidWei : null,
+        tx: null,
+        alerted: false,
+      }))
+      .sort((a, b) => a.trancheIndex - b.trancheIndex);
+    if (list.length) out.set(Number(r.projectId), list);
+  }
+  return out;
+}
+
 // ---- notifications ----
 
 /** Earliest still-open challenge window per project (window ends after `now`). */
-export async function getOpenTranches(db: Db, ids: number[], now: Date): Promise<(typeof trancheEvents.$inferSelect)[]> {
+export async function getOpenTranches(db: Db, ids: number[], now: Date): Promise<TrancheRow[]> {
   if (ids.length === 0) return [];
-  const rows = await db
-    .select()
-    .from(trancheEvents)
-    .where(and(inArray(trancheEvents.projectId, ids), gt(trancheEvents.windowEndsAt, now)))
-    .orderBy(asc(trancheEvents.windowEndsAt));
-  const seen = new Set<number>();
-  return rows.filter((r) => (seen.has(r.projectId) ? false : (seen.add(r.projectId), true)));
+  const out: TrancheRow[] = [];
+  for (const list of (await getTrancheSchedules(db, ids)).values()) {
+    const open = list
+      .filter((t) => t.windowEndsAt && t.windowEndsAt.getTime() > now.getTime())
+      .sort((a, b) => a.windowEndsAt!.getTime() - b.windowEndsAt!.getTime())[0];
+    if (open) out.push(open);
+  }
+  return out.sort((a, b) => a.windowEndsAt!.getTime() - b.windowEndsAt!.getTime());
 }
 
 /** Latest nightly shift that has finished. */
@@ -566,8 +649,9 @@ export async function getNightStatuses(db: Db, ids: number[], from: string): Pro
     .orderBy(asc(nights.night), asc(nights.observed));
 }
 
-export async function getTranches(db: Db, projectId: number): Promise<(typeof trancheEvents.$inferSelect)[]> {
-  return db.select().from(trancheEvents).where(eq(trancheEvents.projectId, projectId)).orderBy(asc(trancheEvents.trancheIndex));
+/** One project's tranche schedule (tranche_events, else the latest vibestarter evidence), index ascending. */
+export async function getTranches(db: Db, projectId: number): Promise<TrancheRow[]> {
+  return (await getTrancheSchedules(db, [projectId])).get(projectId) ?? [];
 }
 
 export async function getProjectByLiveUrl(db: Db, liveUrl: string): Promise<ProjectRow | null> {
