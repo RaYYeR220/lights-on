@@ -7,7 +7,7 @@ import { subscriptions, trancheEvents } from '@/lib/db/schema';
 import { getDb, type Db } from '@/lib/db';
 import path from 'node:path';
 import { migrate } from 'drizzle-orm/pglite/migrator';
-import { vapidSubject, isAllowedPushEndpoint } from '@/lib/notify/webpush';
+import { normalizeEndpoint, PushSubscriptionSchema, vapidSubject, isAllowedPushEndpoint, endpointHash, pushHooks } from '@/lib/notify/webpush';
 import { buildBriefing, templateBriefing, type BriefingProject } from '@/lib/notify/briefing';
 import { encodeStartToken, handleTelegramUpdate, parseCommand, HELP_TEXT } from '@/lib/notify/telegram';
 import { onShiftFinalized } from '@/lib/notify/send';
@@ -18,6 +18,7 @@ import type { NightRow } from '@/lib/db/schema';
 import type { Status } from '@/lib/types';
 
 vi.setConfig({ testTimeout: 30_000 });
+pushHooks.confirm = async () => ({ ok: true }); // the push service accepts by default
 
 const ADDR = '0x' + 'ab'.repeat(20);
 
@@ -447,5 +448,71 @@ describe('copy rule on the template', () => {
   it('a banned word in a project name is blanked in the template', () => {
     const t = templateBriefing({ projects: [proj('Rug Pull Tracker', 'shipped', 'ok')], date: 20261106 }, Date.now());
     expect(t).not.toMatch(/\brug\b/i);
+  });
+});
+
+describe('verified, normalised push subscriptions', () => {
+  const keys = { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) };
+  const req = (endpoint: string, method: 'POST' | 'DELETE' = 'POST') => new Request('http://localhost/api/push/subscribe', {
+    method, headers: { 'x-real-ip': '192.0.2.44' },
+    body: JSON.stringify(method === 'POST' ? { subscription: { endpoint, keys }, addresses: [ADDR] } : { endpoint }),
+  });
+  const fresh = async () => {
+    const db = await getDb('pglite://memory');
+    await migrate(db as never, { migrationsFolder: path.resolve(__dirname, '../../drizzle') });
+    process.env.DATABASE_URL = 'pglite://memory';
+    process.env.INTERNAL_RUN_TOKEN = 'salt-token';
+    await db.delete(subscriptions);
+    return db;
+  };
+
+  it('normalises only a trailing dot and case, never another last character', () => {
+    expect(normalizeEndpoint('https://fcm.googleapis.com/x')).toBe('https://fcm.googleapis.com/x');
+    expect(normalizeEndpoint('https://fcm.googleapis.com./x')).toBe('https://fcm.googleapis.com/x');
+    expect(normalizeEndpoint('https://FCM.GoogleAPIs.com/x')).toBe('https://fcm.googleapis.com/x');
+    expect(normalizeEndpoint('https://web.push.apple.com/x')).toBe('https://web.push.apple.com/x');
+    expect(normalizeEndpoint('https://fcm.googleapis.com:443/x')).toBe('https://fcm.googleapis.com/x');
+    expect(normalizeEndpoint('nope')).toBeNull();
+    const parsed = PushSubscriptionSchema.parse({ endpoint: 'https://FCM.googleapis.com./x', keys: { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) } });
+    expect(parsed.endpoint).toBe('https://fcm.googleapis.com/x');
+  });
+
+  it('hashes the normalised endpoint', () => {
+    expect(endpointHash('https://FCM.googleapis.com./x')).toBe(endpointHash('https://fcm.googleapis.com/x'));
+    expect(endpointHash('https://fcm.googleapis.com:443/x')).toBe(endpointHash('https://fcm.googleapis.com/x'));
+  });
+
+  it('keeps the row on 201, writes nothing on 410 or other failures', async () => {
+    const db = await fresh();
+    const saved = pushHooks.confirm;
+    try {
+      pushHooks.confirm = async () => ({ ok: true });
+      expect((await subscribePOST(req('https://FCM.googleapis.com./fcm/send/ok1'))).status).toBe(200);
+      expect(await db.select().from(subscriptions)).toHaveLength(1);
+      expect((await db.select().from(subscriptions))[0].target).toContain('https://fcm.googleapis.com/fcm/send/ok1');
+      pushHooks.confirm = async () => ({ ok: false, gone: true, code: 'http_410' });
+      const r = await subscribePOST(req('https://fcm.googleapis.com/fcm/send/dead'));
+      expect(r.status).toBe(400);
+      expect(JSON.parse(await r.text())).toEqual({ error: 'endpoint_rejected' });
+      pushHooks.confirm = async () => ({ ok: false, gone: false, code: 'error' });
+      expect((await subscribePOST(req('https://fcm.googleapis.com/fcm/send/err'))).status).toBe(400);
+      expect(await db.select().from(subscriptions)).toHaveLength(1);
+      pushHooks.confirm = () => null;
+      expect((await subscribePOST(req('https://fcm.googleapis.com/fcm/send/nocfg'))).status).toBe(503);
+    } finally {
+      pushHooks.confirm = saved;
+    }
+  });
+
+  it('unsubscribing through a differently written endpoint, and a row with a null hash, both delete', async () => {
+    const db = await fresh();
+    await subscribePOST(req('https://fcm.googleapis.com/fcm/send/del1'));
+    expect((await subscribeDELETE(req('https://FCM.googleapis.com./fcm/send/del1', 'DELETE'))).status).toBe(200);
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
+    await db.insert(subscriptions).values({
+      channel: 'webpush', target: JSON.stringify({ endpoint: 'https://fcm.googleapis.com/fcm/send/old', keys }), addresses: [ADDR],
+    });
+    await subscribeDELETE(req('https://fcm.googleapis.com/fcm/send/old', 'DELETE'));
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
   });
 });

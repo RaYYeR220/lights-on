@@ -20,10 +20,23 @@ export function isAllowedPushEndpoint(u: string): boolean {
   return EXACT_HOSTS.has(host) || SUFFIX_HOSTS.some((suf) => host.endsWith(suf) && host.length > suf.length);
 }
 
-export const endpointHash = (endpoint: string): string => createHash('sha256').update(endpoint).digest('hex');
+/** Canonical form of an endpoint URL: lowercase host, no trailing dot, no default port. Null when it is not a URL. */
+export function normalizeEndpoint(u: string): string | null {
+  try {
+    const url = new URL(u);
+    url.hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** sha256 of the normalised endpoint (falls back to the raw string for non-URLs, which never pass the schema). */
+export const endpointHash = (endpoint: string): string =>
+  createHash('sha256').update(normalizeEndpoint(endpoint) ?? endpoint).digest('hex');
 
 export const PushSubscriptionSchema = z.object({
-  endpoint: z.string().max(2048).refine(isAllowedPushEndpoint, 'endpoint not allowed'),
+  endpoint: z.string().max(2048).transform((u) => normalizeEndpoint(u) ?? u).refine(isAllowedPushEndpoint, 'endpoint not allowed'), // validated in its stored form
   keys: z.object({
     p256dh: z.string().min(16).max(256).regex(B64URL),
     auth: z.string().min(8).max(128).regex(B64URL),
@@ -99,3 +112,16 @@ export async function sendPush(
     return { ok: false, gone: false, code: typeof status === 'number' ? `http_${status}` : 'error' };
   }
 }
+
+/** Swappable for tests: the confirmation push sent when someone subscribes. */
+export const pushHooks: { confirm: (sub: PushSub) => Promise<PushResult> | null } = {
+  confirm: (sub) => {
+    const cfg = vapidFromEnv();
+    if (!cfg) return null;
+    return sendPush(sub, {
+      title: 'Lights On',
+      body: 'Subscribed to Lights On — your briefing arrives after the 05:00 UTC shift',
+      url: '/night',
+    }, cfg);
+  },
+};
