@@ -10,6 +10,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { getDb } from '@/lib/db';
 import { upsertProject } from '@/lib/db/queries';
 import { liveRuns } from '@/lib/db/schema';
+import { STALE_AFTER_MS } from '@/lib/shift/finalize';
 
 const saved = { ...process.env };
 afterEach(() => {
@@ -86,13 +87,17 @@ describe('shift routes: auth and input', () => {
     expect(await body(r)).toEqual({ error: 'unauthorized' });
   });
 
-  it('vercel.json: dispatch at 05:00 UTC, stale recovery at 06:00 UTC', () => {
+  it('vercel.json: dispatch at 05:00 UTC, stale recovery at 07:00 UTC (>= 60 min after dispatch even with hourly jitter)', () => {
     const v = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf8'));
     expect(v).toEqual({
       crons: [
         { path: '/api/shift/dispatch', schedule: '0 5 * * *' },
-        { path: '/api/shift/finalize-stale', schedule: '0 6 * * *' },
+        { path: '/api/shift/finalize-stale', schedule: '0 7 * * *' },
       ],
     });
+    // Hobby crons fire anywhere inside their hour: worst case dispatch at hh:59, stale pass at the next cron's hh:00.
+    const hour = (p: string) => Number(v.crons.find((c: { path: string }) => c.path === p).schedule.split(' ')[1]);
+    const minGapMin = (hour('/api/shift/finalize-stale') - hour('/api/shift/dispatch')) * 60 - 59;
+    expect(minGapMin * 60_000).toBeGreaterThanOrEqual(STALE_AFTER_MS);
   });
 });

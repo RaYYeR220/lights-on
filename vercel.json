@@ -1,1 +1,1 @@
-{"crons":[{"path":"/api/shift/dispatch","schedule":"0 5 * * *"},{"path":"/api/shift/finalize-stale","schedule":"0 6 * * *"}]}
+{"crons":[{"path":"/api/shift/dispatch","schedule":"0 5 * * *"},{"path":"/api/shift/finalize-stale","schedule":"0 7 * * *"}]}

@@ -10,8 +10,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * Vercel Cron (06:00 UTC), `Authorization: Bearer ${CRON_SECRET}`: one bounded (60 s) stale-shift pass, an hour after
- * dispatch, so a stuck shift does not have to wait for the next night.
+ * Vercel Cron (07:00 UTC), `Authorization: Bearer ${CRON_SECRET}`: one bounded (60 s) stale-shift pass, so a stuck shift
+ * does not have to wait for the next night. Two hours after the 05:00 dispatch, not one: Hobby crons fire anywhere
+ * inside their hour, so 05:xx -> 07:xx is always at least 60 min, past STALE_AFTER_MS (45 min); 06:xx could fire
+ * a minute after dispatch and find nothing stale.
  */
 export async function GET(req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;

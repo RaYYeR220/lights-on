@@ -465,7 +465,7 @@ export async function runShiftProject(
       finalized = true;
     } catch (e) {
       // finalizeShift handles its own failures (status attest_pending); this only catches a dead DB. The shift then stays
-      // unfinished and is recovered by a stale pass: the 05:00 UTC dispatch (after()), the 06:00 UTC finalize-stale
+      // unfinished and is recovered by a stale pass: the 05:00 UTC dispatch (after()), the 07:00 UTC finalize-stale
       // cron, or the after() of a later /api/shift/run.
       console.error('shift.finalize failed:', safeErrorCode(e));
     }
