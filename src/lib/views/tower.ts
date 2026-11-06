@@ -4,6 +4,7 @@ import { projects, type ProjectRow } from '@/lib/db/schema';
 import { computeRecord } from '@/lib/shift/rules';
 import { nightNumber, nightDate, shiftStartFor } from '@/lib/shift/night';
 import { sanitizeSummary } from '@/lib/shift/explain';
+import { whatShipped, workSql, type WorkRow } from './work';
 import type { Status } from '@/lib/types';
 
 /** Nights carried by every window: 9 x 10 lites, oldest top left, the latest night bottom right. */
@@ -46,18 +47,12 @@ export interface TowerData {
   projects: TowerProject[];
 }
 
-interface NightViewRow {
+interface NightViewRow extends WorkRow {
   projectId: number;
   night: string;
-  status: Status;
   observed: boolean;
   attested: boolean;
-  summary: string | null;
-  notable: unknown;
-  aiModel: string | null;
-  reasons: unknown;
   createdAt: string | null;
-  work: { commits?: unknown; releases?: unknown } | null;
 }
 
 /** yyyymmdd numbers of the `count` nights ending at `last`, oldest first. */
@@ -65,64 +60,6 @@ export function nightsEndingAt(last: number, count: number): number[] {
   const s = String(last);
   const base = Date.UTC(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
   return Array.from({ length: count }, (_, i) => nightNumber(new Date(base - (count - 1 - i) * DAY_MS)));
-}
-
-const BANNED = /\b(scam|rug|dead|abandoned|fraud)\b/i;
-
-/** Cut to <= n chars at a word boundary, with an ellipsis when cut. */
-function clip(t: string, n: number): string {
-  if (t.length <= n) return t;
-  const cut = t.slice(0, n - 1);
-  const sp = cut.lastIndexOf(' ');
-  return `${(sp > n * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,.;:(-]+$/, '')}…`;
-}
-
-/** AI-written lines (summary / notable) go through the same sanitizer the shift uses. */
-function aiLine(s: unknown): string | null {
-  if (typeof s !== 'string') return null;
-  const t = sanitizeSummary(s);
-  return t ? clip(t, 140) : null;
-}
-
-/** A commit subject as plain text: first line, no HTML, no URLs, no markdown emphasis; merges skipped. */
-function commitLine(s: unknown): string | null {
-  if (typeof s !== 'string') return null;
-  let t = s.split('\n')[0] ?? '';
-  if (/^Merge (pull request|branch|remote-tracking|tag)\b/i.test(t)) return null;
-  t = t.replace(/<[^>]*>/g, ' ').replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ').replace(/[`*_]{1,3}/g, '');
-  t = t.replace(/\s+/g, ' ').trim();
-  if (t.length < 3 || BANNED.test(t)) return null;
-  return clip(t, 100);
-}
-
-function releaseLine(r: unknown): string | null {
-  if (!r || typeof r !== 'object') return null;
-  const { name, tag } = r as { name?: unknown; tag?: unknown };
-  const n = typeof name === 'string' && name.trim() ? name.trim() : null;
-  const t = typeof tag === 'string' && tag.trim() ? tag.trim() : null;
-  const line = n ?? (t ? `Release ${t}` : null);
-  return line ? commitLine(line) : null;
-}
-
-const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-
-function whatShipped(row: NightViewRow | undefined): string[] {
-  if (!row || (row.status !== 'shipped' && row.status !== 'building')) return [];
-  const out: string[] = [];
-  const push = (s: string | null) => {
-    if (s && !out.some((o) => o.toLowerCase() === s.toLowerCase())) out.push(s);
-  };
-  for (const n of asArray(row.notable)) push(aiLine(n));
-  // A summary counts only when a model wrote it; the no-AI fallbacks are generic templates.
-  if (out.length === 0 && row.aiModel) push(aiLine(row.summary));
-  if (row.status === 'shipped') {
-    for (const r of asArray(row.work?.releases)) push(releaseLine(r));
-    const reasons = asArray(row.reasons);
-    if (reasons.includes('liveapp.new_deploy')) push('New deploy seen on the live app');
-    if (reasons.includes('chain.new_deployment')) push('New contract deployment');
-  }
-  for (const c of asArray(row.work?.commits)) push(commitLine(c));
-  return out.slice(0, 2);
 }
 
 const toIso = (v: string | null): string | null => {
@@ -179,27 +116,7 @@ export async function getTowerData(db: Db, opts: { now?: Date } = {}): Promise<T
         CASE WHEN x.latest THEN x.ai_model END AS "aiModel",
         CASE WHEN x.latest THEN x.signals -> 'reasons' END AS reasons,
         CASE WHEN x.latest AND x.observed THEN to_json(x.created_at) #>> '{}' END AS "createdAt",
-        CASE WHEN x.latest AND x.status IN ('shipped', 'building') THEN (
-          SELECT jsonb_build_object(
-            'commits', (
-              SELECT coalesce(jsonb_agg(c.m ORDER BY c.o), '[]'::jsonb) FROM (
-                SELECT t.el ->> 'message' AS m, t.o
-                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.bundle #> '{sources,repo,facts,commits}') = 'array'
-                  THEN e.bundle #> '{sources,repo,facts,commits}' ELSE '[]'::jsonb END) WITH ORDINALITY AS t(el, o)
-                WHERE t.el ->> 'kind' = 'code' AND coalesce((t.el ->> 'authorIsBot')::boolean, false) = false
-                ORDER BY t.o LIMIT 8
-              ) c
-            ),
-            'releases', (
-              SELECT coalesce(jsonb_agg(r.v ORDER BY r.o), '[]'::jsonb) FROM (
-                SELECT jsonb_build_object('name', t.el ->> 'name', 'tag', t.el ->> 'tag') AS v, t.o
-                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.bundle #> '{sources,repo,facts,releases}') = 'array'
-                  THEN e.bundle #> '{sources,repo,facts,releases}' ELSE '[]'::jsonb END) WITH ORDINALITY AS t(el, o)
-                ORDER BY t.o LIMIT 2
-              ) r
-            )
-          ) FROM evidence e WHERE e.hash = x.evidence_hash
-        ) END AS work
+        CASE WHEN x.latest AND x.status IN ('shipped', 'building') THEN ${workSql(sql.raw('x.evidence_hash'))} END AS work
       FROM (
         SELECT n.*, n.attestation_uid IS NOT NULL AS attested,
           n.night = max(n.night) OVER (PARTITION BY n.project_id, n.observed) AS latest
