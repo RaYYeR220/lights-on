@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <filter id="g" x="-1" y="-1" width="3" height="3">
+      <feGaussianBlur stdDeviation="1.6" />
+    </filter>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="#111824" />
+  <rect x="5.5" y="5.5" width="21" height="21" rx="2.5" fill="#0b111b" stroke="#eef2f8" stroke-opacity=".16" />
+  <rect x="8" y="8" width="7" height="7" rx="1" fill="#1f2a3c" />
+  <rect x="17" y="8" width="7" height="7" rx="1" fill="#1f2a3c" />
+  <rect x="8" y="17" width="7" height="7" rx="1" fill="#1f2a3c" />
+  <rect x="17" y="17" width="7" height="7" rx="1" fill="#c6d6f0" filter="url(#g)" opacity=".8" />
+  <rect x="17" y="17" width="7" height="7" rx="1" fill="#c6d6f0" />
+</svg>
