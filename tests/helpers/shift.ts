@@ -5,7 +5,7 @@ import { upsertProject } from '@/lib/db/queries';
 import type { NewProject, ProjectRow } from '@/lib/db/schema';
 import type { Adapters, ShiftDeps } from '@/lib/shift/deps';
 import type { LiveAppFacts, RepoFacts } from '@/lib/types';
-import type { NightAttestation } from '@/lib/attest/eas';
+import type { NightRoot } from '@/lib/attest/eas';
 
 export const NOW = new Date('2026-11-06T05:12:00.000Z');
 export const TX = `0x${'ab'.repeat(32)}` as Hex;
@@ -51,7 +51,8 @@ export function stubAdapters(over: Partial<Adapters> = {}): Adapters {
 export function makeDeps(db: Db, over: Partial<ShiftDeps> = {}) {
   const clock = { now: new Date(NOW) };
   let n = 0;
-  const attestMany = vi.fn(async (ns: NightAttestation[]) => ({ uids: ns.map(() => uidOf(++n)), txHash: TX }));
+  /** One root attestation per batch: one uid shared by every row of it. */
+  const attestRoot = vi.fn(async (_r: NightRoot) => ({ uid: uidOf(++n), txHash: TX }));
   const attest = vi.fn(async () => ({ uid: uidOf(10_000 + ++n), txHash: TX }));
   const deps: ShiftDeps = {
     db,
@@ -59,7 +60,7 @@ export function makeDeps(db: Db, over: Partial<ShiftDeps> = {}) {
     now: () => new Date(clock.now),
     budget: async () => true,
     attest: attest as unknown as ShiftDeps['attest'],
-    attestMany: attestMany as unknown as ShiftDeps['attestMany'],
+    attestRoot: attestRoot as unknown as ShiftDeps['attestRoot'],
     explain: vi.fn(async () => ({ aiOk: true, summary: 'Code changes landed.', notable: [], aiSubstance: null, model: 'm', tokens: 10, refundable: 0 })),
     adapters: stubAdapters(),
     agentId: 42n,

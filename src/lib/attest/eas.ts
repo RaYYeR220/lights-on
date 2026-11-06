@@ -118,7 +118,7 @@ type Logs = readonly { address: string; topics: readonly Hex[]; data: Hex }[];
  * the send call failed.
  */
 async function send(
-  call: { functionName: 'attest' | 'multiAttest'; args: unknown },
+  call: { functionName: 'attest'; args: unknown },
   deps: AttestDeps,
 ): Promise<{ txHash: Hex; nonce: number; logs: Logs } | Skipped> {
   const { wallet, publicClient } = deps;
@@ -215,22 +215,9 @@ export async function attestRoot(r: NightRoot, deps: AttestDeps): Promise<{ uid:
   }
 }
 
-export async function attestMany(ns: NightAttestation[], deps: AttestDeps): Promise<{ uids: Hex[]; txHash: Hex } | Skipped> {
-  if (ns.length === 0) return { skipped: 'error', error: 'empty' };
-  const r = await send({ functionName: 'multiAttest', args: [[{ schema: schemaUid(), data: ns.map(requestData) }]] }, deps);
-  if ('skipped' in r) return r;
-  try {
-    const uids = uidsFrom(r.logs);
-    if (uids.length !== ns.length) return { skipped: 'error', error: 'uid_count_mismatch', txHash: r.txHash, nonce: r.nonce };
-    return { uids, txHash: r.txHash };
-  } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash, nonce: r.nonce };
-  }
-}
-
 /**
  * Fate of a broadcast attestation tx.
- *  success  - mined; uids of the EAS `Attested` logs in log order (= request order for multiAttest)
+ *  success  - mined; uids of the EAS `Attested` logs in log order (exactly one for an attest call)
  *  reverted - mined, reverted: nothing attested
  *  dropped  - no receipt, the sender's mined tx count is past the tx nonce, and the node does not know the tx:
  *             another tx used the nonce, ours can never mine

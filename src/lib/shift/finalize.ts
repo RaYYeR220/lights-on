@@ -3,10 +3,12 @@ import { keccak256, toBytes, type Address, type Hex } from 'viem';
 import {
   DuplicateNight, appendShiftTxs, claimShiftFinalization, claimShiftNights, countUnattested, getNightsForProjects, getProjectsByIds,
   getShift, insertNight, leaseShift, listProjects, listStaleShifts, listUnconfirmedBroadcasts, markNightsBroadcast,
-  releaseNightClaims, saveEvidence, setNightAttestations, updateShift,
+  releaseNightClaims, saveEvidence, saveNightManifest, setNightAttestations, updateShift, type NightProofBatch,
 } from '@/lib/db/queries';
 import type { NightRow, ShiftRow } from '@/lib/db/schema';
-import type { NightAttestation } from '@/lib/attest/eas';
+import type { NightAttestation, NightRoot } from '@/lib/attest/eas';
+import { buildNightManifest, clampLit30, type BuiltManifest } from '@/lib/attest/manifest';
+import { verifyProof } from '@/lib/attest/merkle';
 import { safeErrorCode } from '@/lib/net/redact';
 import { STATUS_CODE, type EvidenceBundle, type Kind, type Status } from '@/lib/types';
 import { computeRecord, decideStatus } from './rules';
@@ -14,8 +16,11 @@ import { hashEvidence, RULES_VERSION } from './evidence';
 import { attestDepsFor, canAttest, receiptOf, siteUrlOf, type ShiftDeps } from './deps';
 import { nightDate, nightNumber, nightOf, nightlyWindow, shiftStartOfNight } from './night';
 
-/** Rows per claim and per multiAttest: a killed pass strands at most one batch. */
-export const ATTEST_BATCH = 20;
+/**
+ * Rows per claim and per root attestation: a shift of up to 500 nights is exactly one tx, and a killed pass strands at
+ * most one batch.
+ */
+export const ATTEST_BATCH = 500;
 export const STALE_AFTER_MS = 45 * 60_000;
 /** Wall-clock bound of one stale pass (no new shift or batch is started after it). */
 export const STALE_PASS_MS = 60_000;
@@ -34,8 +39,8 @@ export interface FinalizeOptions {
   clock?: () => number;
 }
 export interface FinalizeResult { attested: number; txHash?: Hex; skipped?: string }
-/** A batch handed to attestMany; tx/nonce/sender are set once the signed tx is persisted. */
-interface Flight { ids: number[]; claimId: string; tx?: Hex; nonce?: number; sender?: Address }
+/** A batch handed to attestRoot; tx/nonce/sender are set once the signed tx (with the batch's proofs) is persisted. */
+interface Flight { ids: number[]; claimId: string; batch: NightProofBatch; tx?: Hex; nonce?: number; sender?: Address }
 
 export function toAttestation(
   p: { slug: string; night: number; kind: Kind; status: Status; lit30: number; evidenceHash: Hex },
@@ -46,7 +51,7 @@ export function toAttestation(
     night: p.night,
     kind: p.kind === 'nightly' ? 0 : 1,
     status: STATUS_CODE[p.status],
-    lit30: Math.min(Math.max(0, p.lit30), 65_535),
+    lit30: clampLit30(p.lit30),
     evidenceHash: p.evidenceHash,
     agentId: deps.agentId ?? 0n,
     evidenceURI: `${siteUrlOf(deps)}/api/v1/evidence/${p.evidenceHash}`,
@@ -103,11 +108,29 @@ function persistedAt(batch: NightRow[]): number {
 }
 
 /**
+ * The Merkle fields a broadcast batch persisted with its tx (before the send), if they check out: one root and one
+ * manifest across the group, and every row's proof leading from its leaf to that root. Null otherwise.
+ */
+function storedBatch(rows: NightRow[]): NightProofBatch | null {
+  const root = rows[0]?.attestRoot;
+  const manifest = rows[0]?.attestManifest;
+  if (!root || !manifest) return null;
+  const out: NightProofBatch['rows'] = [];
+  for (const r of rows) {
+    if (r.attestRoot !== root || r.attestManifest !== manifest || !r.attestLeaf || !r.attestProof || r.attestLit30 === null) return null;
+    if (!verifyProof(r.attestLeaf as Hex, r.attestProof as Hex[], root as Hex)) return null;
+    out.push({ id: r.id, leaf: r.attestLeaf, proof: r.attestProof, lit30: r.attestLit30 });
+  }
+  return { root, manifest, rows: out };
+}
+
+/**
  * Settle batches that were broadcast but never confirmed (rows held under a claim token with attest_tx, no uid), one
- * group per (claim token, tx). Mined: uids from the EAS `Attested` logs, mapped onto the rows in batch order (id
- * ascending, the order they were sent). Confirmed revert, or dropped (no receipt, a later tx consumed its nonce, and
- * the tx was persisted >= DROP_AFTER_MS ago): release the rows. Pending, a younger dropped, RPC error or count
- * mismatch: leave them claimed, so they are never sent twice.
+ * group per (claim token, tx). Mined: the tx's single EAS `Attested` uid (the root attestation) is written to every row
+ * of the group, with the proofs persisted before the send. Confirmed revert, or dropped (no receipt, a later tx
+ * consumed its nonce, and the tx was persisted >= DROP_AFTER_MS ago): release the rows. Pending, a younger dropped,
+ * RPC error, a uid count other than 1, or stored proofs that do not check out: leave them claimed, so they are never
+ * sent twice.
  * Every write presents the group's claim token AND tx, so a slower concurrent reconciler can never touch rows that
  * were released and re-claimed in the meantime.
  */
@@ -131,11 +154,12 @@ async function reconcileBroadcasts(shift: ShiftRow, deps: ShiftDeps, o: Required
     const ids = batch.map((r) => r.id);
     const rc = await receipt(tx, nonce, sender).catch((e) => ({ status: 'error' as const, error: safeErrorCode(e) }));
     if (rc.status === 'success') {
-      if (rc.uids.length !== batch.length) {
-        console.error('shift.reconcile: uid count mismatch for a mined batch; rows left claimed');
+      const stored = storedBatch(batch);
+      if (rc.uids.length !== 1 || !stored) {
+        console.error(`shift.reconcile: a mined root batch does not check out (${rc.uids.length !== 1 ? 'uid count' : 'stored proofs'}); rows left claimed`);
         continue;
       }
-      attested += await setNightAttestations(deps.db, batch.map((r, i) => ({ id: r.id, uid: rc.uids[i] })), tx, claimId);
+      attested += await setNightAttestations(deps.db, stored, rc.uids[0], tx, claimId);
       last = tx;
     } else if (rc.status === 'reverted' || (rc.status === 'dropped' && deps.now().getTime() - persistedAt(batch) >= DROP_AFTER_MS)) {
       await releaseNightClaims(deps.db, ids, claimId, tx);
@@ -144,30 +168,50 @@ async function reconcileBroadcasts(shift: ShiftRow, deps: ShiftDeps, o: Required
   return { attested, ...(last ? { tx: last } : {}) };
 }
 
-async function attestationsFor(rows: NightRow[], shift: ShiftRow, deps: ShiftDeps): Promise<NightAttestation[]> {
+/** One batch's root attestation: the manifest (with its tree), the per-row proof data, and the NightRoot to sign. */
+interface RootPlan { built: BuiltManifest; batch: NightProofBatch; root: NightRoot }
+
+async function rootFor(rows: NightRow[], shift: ShiftRow, deps: ShiftDeps): Promise<RootPlan> {
   const ids = [...new Set(rows.map((r) => r.projectId))];
   const slugs = new Map((await getProjectsByIds(deps.db, ids)).map((p) => [p.id, p.slug]));
   const history = await getNightsForProjects(deps.db, ids, lit30From(nightOf(shift.night)));
-  return rows.map((row) => toAttestation({
+  const agentId = deps.agentId ?? 0n;
+  const built = buildNightManifest(rows.map((row) => ({
     slug: slugs.get(row.projectId) ?? String(row.projectId),
     night: nightOf(row.night),
-    kind: 'nightly',
     status: row.status,
     lit30: lit30Of(history.filter((h) => h.projectId === row.projectId), nightOf(row.night)),
     evidenceHash: row.evidenceHash as Hex,
-  }, deps));
+  })), agentId);
+  const batch: NightProofBatch = {
+    root: built.root,
+    manifest: built.hash,
+    rows: rows.map((row, i) => {
+      const l = built.inOrder[i];
+      return { id: row.id, leaf: l.leaf, proof: built.proofs.get(l.leaf)!, lit30: l.lit30 };
+    }),
+  };
+  return {
+    built,
+    batch,
+    root: {
+      root: built.root, night: built.manifest.night, count: rows.length, agentId,
+      manifestURI: `${siteUrlOf(deps)}/api/v1/manifest/${built.hash}`,
+    },
+  };
 }
 
 /**
  * Close a nightly shift. Safe to call repeatedly and concurrently:
  *   1. reconcile batches broadcast earlier but never confirmed;
  *   2. fill missing nights (`unavailable`);
- *   3. loop: claim <= 20 unattested rows under a fresh claim token (each row reaches exactly one caller; a tx-less
- *      claim older than 10 min is taken over in the same statement), send them with one multiAttest. The signed
- *      hash is persisted under the token before the send, and the send goes ahead only if every row of the batch
- *      was still ours. A batch that was never broadcast, or that reverted, is released for a retry; a broadcast
- *      batch with an unknown outcome keeps its claim, tx, nonce and sender (persisted before the send), for step 1
- *      of a later pass, and the loop stops;
+ *   3. loop: claim <= 500 unattested rows under a fresh claim token (each row reaches exactly one caller; a tx-less
+ *      claim older than 10 min is taken over in the same statement), build their Merkle tree and store the night
+ *      manifest, then attest the ROOT with one `attest`. The signed hash is persisted under the token, in the same
+ *      statement as every row's leaf and proof, before the send, and the send goes ahead only if every row of the
+ *      batch was still ours. A batch that was never broadcast, or that reverted, is released for a retry; a
+ *      broadcast batch with an unknown outcome keeps its claim, tx, nonce, sender and proofs (persisted before the
+ *      send), for step 1 of a later pass, and the loop stops;
  *   4. status `attested` / `attest_pending` (also after any throw), then the finalization claim: onFinalized fires
  *      once, from the call that first closed the shift, after the attestation writes.
  */
@@ -182,9 +226,9 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
   let skipped: string | undefined;
   let note: string | null = null;
   const txs: string[] = [];
-  /** Claimed by us and never handed to attestMany: always safe to release (under our token). */
+  /** Claimed by us and never handed to attestRoot: always safe to release (under our token). */
   const unsent: { ids: number[]; claimId: string }[] = [];
-  /** Handed to attestMany: released only on proof that nothing is on chain. */
+  /** Handed to attestRoot: released only on proof that nothing is on chain. */
   let inflight: Flight | null = null;
 
   try {
@@ -204,28 +248,31 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
           break;
         }
         const claimId = randomUUID();
-        const rows = await claimShiftNights(db, shiftId, deps.now(), claimId, ATTEST_BATCH);
+        const rows = await claimShiftNights(db, shiftId, deps.now(), claimId, deps.attestBatch ?? ATTEST_BATCH);
         if (rows.length === 0) break;
         const ids = rows.map((r) => r.id);
         const held = { ids, claimId };
         unsent.push(held);
-        const atts = await attestationsFor(rows, shift, deps);
+        const plan = await rootFor(rows, shift, deps);
+        // Stored BEFORE anything is signed: the manifestURI resolves the moment the root lands on chain.
+        await saveNightManifest(db, plan.built.hash, shift.night, plan.built.root, plan.built.manifest);
         unsent.splice(unsent.indexOf(held), 1);
 
-        const flight: Flight = { ids, claimId };
+        const flight: Flight = { ids, claimId, batch: plan.batch };
         inflight = flight;
-        // Runs after signing and BEFORE the raw tx is sent: if this write fails, or misses any row of the batch (its
-        // claim was taken over), it throws and nothing is sent; the rows still held are then released below.
+        // Runs after signing and BEFORE the raw tx is sent, writing the tx and every row's proof in one statement: if
+        // this write fails, or misses any row of the batch (its claim was taken over), it throws and nothing is sent;
+        // the rows still held are then released below.
         const onBroadcast = async (h: Hex, nonce: number, sender: Address) => {
-          const written = await markNightsBroadcast(db, ids, claimId, h, nonce, sender, deps.now());
+          const written = await markNightsBroadcast(db, plan.batch, claimId, h, nonce, sender, deps.now());
           if (written !== ids.length) throw new Error('claim_lost');
           flight.tx = h;
           flight.nonce = nonce;
           flight.sender = sender;
         };
-        let r: Awaited<ReturnType<ShiftDeps['attestMany']>>;
+        let r: Awaited<ReturnType<ShiftDeps['attestRoot']>>;
         try {
-          r = await deps.attestMany(atts, attestDepsFor(deps, onBroadcast));
+          r = await deps.attestRoot(plan.root, attestDepsFor(deps, onBroadcast));
         } catch (e) {
           if (!flight.tx) {
             // No tx was persisted, so nothing was sent (send() persists before it sends). Keep the claim anyway:
@@ -240,9 +287,9 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
         if ('skipped' in r) {
           const tx = r.txHash ?? flight.tx;
           if (tx && r.error !== 'reverted') {
-            // Broadcast, outcome unknown: keep claim + tx + nonce; a later pass settles it from the receipt.
+            // Broadcast, outcome unknown: keep claim + tx + nonce + proofs; a later pass settles it from the receipt.
             flight.tx = tx;
-            await markNightsBroadcast(db, ids, claimId, tx, r.nonce ?? flight.nonce ?? null, flight.sender ?? null, deps.now());
+            await markNightsBroadcast(db, plan.batch, claimId, tx, r.nonce ?? flight.nonce ?? null, flight.sender ?? null, deps.now());
             skipped = 'unconfirmed';
             note = `unconfirmed:${r.error ?? 'error'}`;
           } else {
@@ -260,7 +307,7 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
           break;
         }
         flight.tx = r.txHash;
-        attested += await setNightAttestations(db, ids.map((id, k) => ({ id, uid: r.uids[k] })), r.txHash, claimId);
+        attested += await setNightAttestations(db, plan.batch, r.uid, r.txHash, claimId);
         inflight = null;
         txHash = r.txHash;
         txs.push(r.txHash);
@@ -271,7 +318,7 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
     note ??= `skipped:error:${safeErrorCode(e)}`;
     console.error('shift.finalize failed:', safeErrorCode(e));
     const f = inflight as Flight | null;
-    if (f?.tx) await markNightsBroadcast(db, f.ids, f.claimId, f.tx, f.nonce ?? null, f.sender ?? null, deps.now()).catch(() => undefined);
+    if (f?.tx) await markNightsBroadcast(db, f.batch, f.claimId, f.tx, f.nonce ?? null, f.sender ?? null, deps.now()).catch(() => undefined);
   } finally {
     for (const u of unsent) await releaseNightClaims(db, u.ids, u.claimId).catch(() => undefined);
   }

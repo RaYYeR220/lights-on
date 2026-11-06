@@ -4,7 +4,7 @@ import { createPublicClient, createWalletClient, encodePacked, http, keccak256, 
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 import { SCHEMA_REGISTRY_ADDRESS, EAS_ADDRESS, IDENTITY_REGISTRY_ADDRESS, easAbi, identityRegistryAbi, schemaRegistryAbi } from '@/lib/attest/abi';
-import { attestMany, attestOne, decodeNight, encodeNight, schemaUid, SCHEMA, type NightAttestation } from '@/lib/attest/eas';
+import { attestOne, decodeNight, encodeNight, schemaUid, SCHEMA, type NightAttestation } from '@/lib/attest/eas';
 import { registerAgent } from '@/lib/attest/erc8004';
 import { verifyNight } from '@/lib/attest/verify';
 import { hashEvidence } from '@/lib/shift/evidence';
@@ -47,6 +47,18 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
   let spent = 0n;
   const budget = async (w: bigint) => { spent += w; return true; };
 
+  const ZERO_ADDR = '0x0000000000000000000000000000000000000000' as const;
+  /** The previous nightly flow: one multiAttest with one per-project attestation each (kept for the cost comparison). */
+  async function perProjectMultiAttest(ns: NightAttestation[]): Promise<{ uids: Hex[]; gasUsed: bigint }> {
+    const hash = await wallet.writeContract({
+      address: EAS_ADDRESS, abi: easAbi, functionName: 'multiAttest',
+      args: [[{ schema: schemaUid(), data: ns.map((n) => ({ recipient: ZERO_ADDR, expirationTime: 0n, revocable: false, refUID: ('0x' + '00'.repeat(32)) as Hex, data: encodeNight(n), value: 0n })) }]],
+    });
+    const rc = await publicClient.waitForTransactionReceipt({ hash });
+    expect(rc.status).toBe('success');
+    return { uids: parseEventLogs({ abi: easAbi, eventName: 'Attested', logs: rc.logs }).map((l) => l.args.uid as Hex), gasUsed: rc.gasUsed };
+  }
+
   beforeAll(async () => {
     anvil = spawn('anvil', ['--fork-url', FORK_URL, '--port', String(PORT), '--silent'], { stdio: 'ignore' });
     const deadline = Date.now() + 90_000;
@@ -76,13 +88,11 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
     expect(s.revocable).toBe(false);
   });
 
-  it('attestMany of 3 nights then verifyNight matches; tampered bundle does not', async () => {
+  it('per-project attestations (the live-run schema) verify; tampered bundle does not', async () => {
     const bundles = [20261104, 20261105, 20261106].map((n) => bundle(n));
-    const r = await attestMany(bundles.map((b) => nightFor(b, 7n)), { wallet, publicClient, budget, unsafeNoPersist: true });
-    if ('skipped' in r) throw new Error(`skipped ${r.skipped} ${r.error}`);
+    const r = await perProjectMultiAttest(bundles.map((b) => nightFor(b, 7n)));
     expect(r.uids).toHaveLength(3);
     expect(new Set(r.uids).size).toBe(3);
-    expect(spent).toBeGreaterThan(0n);
     for (let i = 0; i < 3; i++) {
       const v = await verifyNight(r.uids[i]!, bundles[i]!, publicClient, [account.address]);
       expect(v.match).toBe(true);

@@ -49,7 +49,7 @@ export const shifts = pgTable('shifts', {
   finishedAt: tsz('finished_at'),
   planned: integer('planned').notNull().default(0),
   done: integer('done').notNull().default(0),
-  /** Every multiAttest tx of the shift, in send order (appended atomically, never duplicated). */
+  /** Every root attestation tx of the shift (one per batch of up to 500 nights), in send order (appended atomically, never duplicated). */
   attestTxs: text('attest_tx').array(),
   gasUsed: numeric('gas_used', { mode: 'string' }),
   status: text('status').notNull().default('running'),

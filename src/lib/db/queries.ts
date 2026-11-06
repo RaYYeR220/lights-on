@@ -284,7 +284,7 @@ export async function updateShift(db: Db, id: number, patch: Partial<typeof shif
 }
 
 /**
- * Append multiAttest txs to a shift, in order, skipping any already recorded. One statement: concurrent finalize
+ * Append root attestation txs to a shift, in order, skipping any already recorded. One statement: concurrent finalize
  * passes never lose each other's txs (the row lock serializes them and the second re-reads the appended array).
  */
 export async function appendShiftTxs(db: Db, shiftId: number, txs: string[]): Promise<void> {
@@ -370,15 +370,18 @@ export async function claimShiftNights(db: Db, shiftId: number, at: Date, claimI
 }
 
 /**
- * Give claimed-but-unattested rows back (forgetting any tx/nonce) so a later pass can retry them. Only rows still held
- * under `claimId` (and, from a reconcile, still carrying the checked `tx`) are touched. Only for batches that were
- * never broadcast, or whose tx reverted or can no longer mine.
+ * Give claimed-but-unattested rows back (forgetting any tx/nonce and every Merkle field) so a later pass can retry them.
+ * Only rows still held under `claimId` (and, from a reconcile, still carrying the checked `tx`) are touched. Only for
+ * batches that were never broadcast, or whose tx reverted or can no longer mine.
  */
 export async function releaseNightClaims(db: Db, ids: number[], claimId: string, tx?: string): Promise<void> {
   if (ids.length === 0) return;
   await db
     .update(nights)
-    .set({ attestClaimedAt: null, attestClaimId: null, attestTx: null, attestNonce: null, attestSender: null, attestSentAt: null })
+    .set({
+      attestClaimedAt: null, attestClaimId: null, attestTx: null, attestNonce: null, attestSender: null, attestSentAt: null,
+      attestRoot: null, attestLeaf: null, attestProof: null, attestLit30: null, attestManifest: null,
+    })
     .where(and(
       inArray(nights.id, ids),
       isNull(nights.attestationUid),
@@ -388,31 +391,55 @@ export async function releaseNightClaims(db: Db, ids: number[], claimId: string,
 }
 
 /**
- * Record the signed tx (+ nonce + sender) on our claimed batch, before it is sent or while its outcome is unknown.
- * A null nonce/sender never erases one already recorded; `attest_sent_at` keeps the FIRST persist time (`at`).
- * Returns how many rows were written: fewer than `ids` means some row is no longer held under `claimId` (or already
- * carries another tx), and the caller must then not send.
+ * A claimed batch as one nightly root covers it: the root, the hash of its night manifest, and per row its leaf, its
+ * proof (sibling hashes, leaf to root; empty for a one-row batch) and the lit30 the leaf commits to.
+ */
+export interface NightProofBatch {
+  root: string;
+  manifest: string;
+  rows: { id: number; leaf: string; proof: string[]; lit30: number }[];
+}
+
+const HEX32 = /^0x[0-9a-fA-F]{64}$/;
+
+/** `(id, leaf, proof, lit30)` VALUES for a batch. Every hash is checked first: a text[] literal is built from them. */
+function proofRows(b: NightProofBatch) {
+  if (!HEX32.test(b.root) || !HEX32.test(b.manifest)) throw new Error('bad_proof_batch');
+  return sql.join(b.rows.map((r) => {
+    if (!Number.isInteger(r.id) || !HEX32.test(r.leaf) || !Array.isArray(r.proof) || !r.proof.every((p) => HEX32.test(p))
+      || !Number.isInteger(r.lit30)) throw new Error('bad_proof_batch');
+    const proof = `{${r.proof.map((p) => p.toLowerCase()).join(',')}}`;
+    return sql`(${r.id}::int, ${r.leaf.toLowerCase()}::text, ${proof}::text[], ${r.lit30}::int)`;
+  }), sql`, `);
+}
+
+/**
+ * Record the signed tx (+ nonce + sender) AND the batch's Merkle fields on our claimed rows, in one statement, before
+ * the tx is sent (or while its outcome is unknown): a row that carries a tx always carries its proof into that tx's
+ * root. A null nonce/sender never erases one already recorded; `attest_sent_at` keeps the FIRST persist time (`at`).
+ * Returns how many rows were written: fewer than the batch means some row is no longer held under `claimId` (or
+ * already carries another tx or root), and the caller must then not send.
  */
 export async function markNightsBroadcast(
-  db: Db, ids: number[], claimId: string, tx: string, nonce: number | null, sender: string | null, at: Date,
+  db: Db, batch: NightProofBatch, claimId: string, tx: string, nonce: number | null, sender: string | null, at: Date,
 ): Promise<number> {
-  if (ids.length === 0) return 0;
-  const rows = await db
-    .update(nights)
-    .set({
-      attestTx: tx,
-      attestNonce: sql`COALESCE(${nonce}::int, ${nights.attestNonce})`,
-      attestSender: sql`COALESCE(${sender}::text, ${nights.attestSender})`,
-      attestSentAt: sql`COALESCE(${nights.attestSentAt}, ${at.toISOString()}::timestamptz)`,
-    })
-    .where(and(
-      inArray(nights.id, ids),
-      isNull(nights.attestationUid),
-      eq(nights.attestClaimId, claimId),
-      or(isNull(nights.attestTx), eq(nights.attestTx, tx)), // never swaps the tx of a batch
-    ))
-    .returning({ id: nights.id });
-  return rows.length;
+  if (batch.rows.length === 0) return 0;
+  const values = proofRows(batch);
+  const root = batch.root.toLowerCase();
+  const res = await db.execute(sql`
+    UPDATE nights AS n SET
+      attest_tx = ${tx},
+      attest_nonce = COALESCE(${nonce}::int, n.attest_nonce),
+      attest_sender = COALESCE(${sender}::text, n.attest_sender),
+      attest_sent_at = COALESCE(n.attest_sent_at, ${at.toISOString()}::timestamptz),
+      attest_root = ${root}, attest_manifest = ${batch.manifest.toLowerCase()},
+      attest_leaf = v.leaf, attest_proof = v.proof, attest_lit30 = v.lit30
+    FROM (VALUES ${values}) AS v(id, leaf, proof, lit30)
+    WHERE n.id = v.id AND n.attestation_uid IS NULL AND n.attest_claim_id = ${claimId}
+      AND (n.attest_tx IS NULL OR n.attest_tx = ${tx})
+      AND (n.attest_root IS NULL OR n.attest_root = ${root})
+    RETURNING n.id`);
+  return (res as unknown as { rows: unknown[] }).rows.length;
 }
 
 /** Claimed rows of a shift with a broadcast tx but no uid yet, in batch order (id ascending). */
@@ -430,19 +457,25 @@ export async function listUnconfirmedBroadcasts(db: Db, shiftId: number): Promis
 }
 
 /**
- * Write UIDs (and the tx) for rows held under `claimId`, in one statement. Never overwrites a UID, and never writes
- * over a different tx than the one these uids came from. Returns how many rows were actually written.
+ * Write the root attestation's uid (and the tx, root, manifest and each row's leaf/proof/lit30) onto the rows of a batch
+ * held under `claimId`, in one statement. Never overwrites a uid, and never writes over a different tx or root than
+ * the one this uid came from. Returns how many rows were actually written.
  */
 export async function setNightAttestations(
-  db: Db, rows: { id: number; uid: string }[], tx: string, claimId: string,
+  db: Db, batch: NightProofBatch, uid: string, tx: string, claimId: string,
 ): Promise<number> {
-  if (rows.length === 0) return 0;
-  const values = sql.join(rows.map((r) => sql`(${r.id}::int, ${r.uid}::text)`), sql`, `);
+  if (batch.rows.length === 0) return 0;
+  if (!HEX32.test(uid)) throw new Error('bad_uid');
+  const values = proofRows(batch);
+  const root = batch.root.toLowerCase();
   const res = await db.execute(sql`
-    UPDATE nights AS n SET attestation_uid = v.uid, attest_tx = ${tx}
-    FROM (VALUES ${values}) AS v(id, uid)
+    UPDATE nights AS n SET attestation_uid = ${uid}, attest_tx = ${tx},
+      attest_root = ${root}, attest_manifest = ${batch.manifest.toLowerCase()},
+      attest_leaf = v.leaf, attest_proof = v.proof, attest_lit30 = v.lit30
+    FROM (VALUES ${values}) AS v(id, leaf, proof, lit30)
     WHERE n.id = v.id AND n.attestation_uid IS NULL AND n.attest_claim_id = ${claimId}
       AND (n.attest_tx IS NULL OR n.attest_tx = ${tx})
+      AND (n.attest_root IS NULL OR n.attest_root = ${root})
     RETURNING n.id`);
   return (res as unknown as { rows: unknown[] }).rows.length;
 }

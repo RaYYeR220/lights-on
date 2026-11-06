@@ -9,7 +9,7 @@ import { checkChain } from '@/lib/adapters/chain';
 import { checkVibestarter } from '@/lib/adapters/vibestarter';
 import { DEFAULT_BASE_RPC, getBaseClient, type RpcLike } from '@/lib/adapters/baseRpc';
 import {
-  attestMany, attestOne, attestationStatus, type AttestDeps, type AttestReceipt, type PersistingAttestDeps,
+  attestOne, attestRoot, attestationStatus, type AttestDeps, type AttestReceipt, type PersistingAttestDeps,
 } from '@/lib/attest/eas';
 import { getPublicClient, getWallet, type AnyPublicClient } from '@/lib/attest/signer';
 import { safeFetch } from '@/lib/net/safeFetch';
@@ -34,8 +34,10 @@ export interface ShiftDeps {
   budget: (field: BudgetField, amount: number | bigint) => Promise<boolean>;
   /** Refund a reservation (gas before broadcast, unused LLM tokens, a lost live-run race). */
   release?: (field: BudgetField, amount: number | bigint) => Promise<void>;
+  /** Live runs: one per-project attestation. */
   attest: typeof attestOne;
-  attestMany: typeof attestMany;
+  /** Nightly shift: one root attestation per claim batch. */
+  attestRoot: typeof attestRoot;
   explain: typeof explainNight;
   /** Task 12 hook (briefings); called once per shift, by the finalize that closes it. */
   onFinalized?: (shiftId: number) => Promise<void>;
@@ -50,6 +52,8 @@ export interface ShiftDeps {
   githubToken?: string;
   /** Test seam: per-stage deadlines (ms) and the live run's total budget; defaults in run.ts (DEADLINES_MS). */
   deadlinesMs?: Partial<Record<'repo' | 'liveapp' | 'chain' | 'vibestarter' | 'explain' | 'liveTotal', number>>;
+  /** Test seam: rows per claim and per root (default ATTEST_BATCH in finalize.ts). */
+  attestBatch?: number;
   /** ERC-8004 agent id of the watcher. Missing or 0 -> nothing is attested. */
   agentId?: bigint;
   siteUrl?: string;
@@ -163,7 +167,7 @@ export function makeShiftDeps(db: Db, opts: { kind: Kind; shiftId?: number; onFi
     budget,
     release,
     attest: attestOne,
-    attestMany,
+    attestRoot,
     explain: explainNight,
     onFinalized: opts.onFinalized,
     signer: { wallet: getWallet(rpcUrl), publicClient: getPublicClient(rpcUrl) },

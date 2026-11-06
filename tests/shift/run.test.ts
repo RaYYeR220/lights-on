@@ -154,10 +154,10 @@ describe('runShiftProject', () => {
     expect(await runShiftProject(shift.id, a.id, deps)).toMatchObject({ ok: true, finalized: false });
     expect(await runShiftProject(shift.id, a.id, deps)).toMatchObject({ ok: false, code: 'duplicate' });
     expect((await getShift(db, shift.id))?.done).toBe(1);
-    expect(deps.attestMany).not.toHaveBeenCalled();
+    expect(deps.attestRoot).not.toHaveBeenCalled();
     expect(await runShiftProject(shift.id, b.id, deps)).toMatchObject({ ok: true, finalized: true });
-    expect(deps.attestMany).toHaveBeenCalledTimes(1);
-    expect((deps.attestMany as ReturnType<typeof vi.fn>).mock.calls[0][0]).toHaveLength(2);
+    expect(deps.attestRoot).toHaveBeenCalledTimes(1);
+    expect((deps.attestRoot as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ count: 2, night: 20261106 });
     const s = await getShift(db, shift.id);
     expect(s).toMatchObject({ done: 2, status: 'attested', attestTxs: [TX] });
   });

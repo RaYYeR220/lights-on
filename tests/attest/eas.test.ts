@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodePacked, keccak256, toBytes, zeroAddress, type Hex } from 'viem';
 import {
-  attestMany, attestOne, attestRoot, attestationStatus, computeFees, decodeNight, decodeRoot, encodeNight, encodeRoot, rootSchemaUid,
+  attestOne, attestRoot, attestationStatus, computeFees, decodeNight, decodeRoot, encodeNight, encodeRoot, rootSchemaUid,
   schemaUid, ROOT_SCHEMA, SCHEMA, type AttestDeps, type NightAttestation, type NightRoot,
 } from '@/lib/attest/eas';
 import { EAS_ADDRESS, easAbi } from '@/lib/attest/abi';
@@ -10,6 +10,12 @@ const night = (i = 0): NightAttestation => ({
   projectKey: keccak256(toBytes(`proj-${i}`)), night: 20261106, kind: 0, status: 1, lit30: 17,
   evidenceHash: keccak256(toBytes(`ev-${i}`)), agentId: 42n, evidenceURI: 'https://example.test/api/v1/evidence/0xabc',
 });
+
+/** A nightly root over many project-nights (one attestation, whatever the count). */
+const R: NightRoot = {
+  root: keccak256(toBytes('root')), night: 20261106, count: 52, agentId: 42n,
+  manifestURI: `https://example.test/api/v1/manifest/${keccak256(toBytes('m'))}`,
+};
 
 /** What the fake wallet "signs"; the tx hash is keccak256 of it, computed locally before anything is sent. */
 const SERIALIZED = ('0x02' + 'ab'.repeat(100)) as Hex;
@@ -66,7 +72,7 @@ describe('attest gas cap', () => {
   it('over the cap: skipped gas_cap and NO tx signed or sent', async () => {
     const { d, signTransaction, sendRawTransaction, budget } = deps({ budget: async () => false });
     expect(await attestOne(night(), d)).toEqual({ skipped: 'gas_cap' });
-    expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'gas_cap' });
+    expect(await attestRoot(R, d)).toEqual({ skipped: 'gas_cap' });
     expect(signTransaction).not.toHaveBeenCalled();
     expect(sendRawTransaction).not.toHaveBeenCalled();
     expect(budget).toHaveBeenCalledWith(240_000n * (2n * 1_000_000n + 1_000_000n)); // 1.2x gas, 2x baseFee + tip
@@ -80,7 +86,7 @@ describe('attest gas cap', () => {
 
   it('estimate failure: skipped error with a redacted code, never throws', async () => {
     const { d, sendRawTransaction } = deps({ estimateErr: new Error('boom https://rpc.example/?key=SECRET') });
-    const r = await attestMany([night()], d);
+    const r = await attestRoot(R, d);
     expect(r).toEqual({ skipped: 'error', error: 'error' });
     expect(JSON.stringify(r)).not.toContain('SECRET');
     expect(sendRawTransaction).not.toHaveBeenCalled();
@@ -90,7 +96,7 @@ describe('attest gas cap', () => {
     const { d, publicClient, budget, signTransaction, sendRawTransaction } = deps();
     const bare = { ...d, onBroadcast: undefined };
     expect(await attestOne(night(), bare)).toEqual({ skipped: 'error', error: 'no_persist' });
-    expect(await attestMany([night(1), night(2)], bare)).toEqual({ skipped: 'error', error: 'no_persist' });
+    expect(await attestRoot(R, bare)).toEqual({ skipped: 'error', error: 'no_persist' });
     expect(publicClient.estimateContractGas).not.toHaveBeenCalled();
     expect(budget).not.toHaveBeenCalled();
     expect(signTransaction).not.toHaveBeenCalled();
@@ -104,11 +110,6 @@ describe('attest gas cap', () => {
     expect(sendRawTransaction).toHaveBeenCalledTimes(1);
   });
 
-  it('empty batch is not sent', async () => {
-    const { d, signTransaction } = deps();
-    expect(await attestMany([], d)).toMatchObject({ skipped: 'error' });
-    expect(signTransaction).not.toHaveBeenCalled();
-  });
 });
 
 describe('explicit fees, local signing', () => {
@@ -126,15 +127,6 @@ describe('explicit fees, local signing', () => {
     expect(arg).toMatchObject({ to: EAS_ADDRESS, type: 'eip1559', gas: 240_000n, nonce: 7, value: 0n, maxPriorityFeePerGas: 10_000_000n, maxFeePerGas: 20_000_000n });
     expect(decodeFunctionData({ abi: easAbi, data: arg.data }).functionName).toBe('attest');
     expect(sendRawTransaction).toHaveBeenCalledWith({ serializedTransaction: SERIALIZED });
-  });
-
-  it('60 attestations at realistic Base fees (baseFee 0.005 gwei, ~350k gas each) reserve under 0.0004 ETH', async () => {
-    const { d, budget } = deps({ baseFee: 5_000_000n, tip: 1_000_000n }); // typical Base tip ~0.001 gwei
-    d.publicClient.estimateContractGas = (async () => 60n * 350_000n) as never;
-    await attestMany(Array.from({ length: 60 }, (_, i) => night(i)), d);
-    const reserved = budget.mock.calls[0]![0];
-    expect(reserved).toBeLessThan(400_000_000_000_000n); // 0.0004 ETH
-    expect(reserved).toBeGreaterThan(0n);
   });
 
   it('refunds the reservation only when nothing was sent', async () => {
@@ -175,7 +167,7 @@ describe('persist before send; after that the tx hash is never lost', () => {
   it('send throws after the persist (timeout, "already known") -> skipped error WITH txHash + nonce, no refund', async () => {
     const { d, release } = deps({ sendErr: Object.assign(new Error('x'), { name: 'TimeoutError' }) });
     const onBroadcast = vi.fn(async () => undefined);
-    expect(await attestMany([night(1), night(2)], { ...d, onBroadcast })).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
+    expect(await attestRoot(R, { ...d, onBroadcast })).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
     expect(onBroadcast).toHaveBeenCalledTimes(1);
     expect(release).not.toHaveBeenCalled();
   });
@@ -191,7 +183,7 @@ describe('persist before send; after that the tx hash is never lost', () => {
   it('receipt wait fails -> skipped error WITH txHash + nonce; configurable wait', async () => {
     const { d, publicClient, release } = deps();
     publicClient.waitForTransactionReceipt.mockRejectedValue(Object.assign(new Error('x'), { name: 'WaitForTransactionReceiptTimeoutError' }));
-    expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
+    expect(await attestRoot(R, d)).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
     expect(release).not.toHaveBeenCalled();
     expect(publicClient.waitForTransactionReceipt).toHaveBeenCalledWith({ hash: SENT, timeout: 60_000 });
     await attestOne(night(), { ...d, receiptTimeoutMs: 30_000 });
@@ -201,10 +193,10 @@ describe('persist before send; after that the tx hash is never lost', () => {
   it('a replacement receipt (another tx took our nonce) is never adopted: skipped replaced, no uids', async () => {
     const { d, publicClient } = deps();
     const other = keccak256(toBytes('someone else'));
-    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1)), attestedLog(uid(2))], 'success', other));
-    const r = await attestMany([night(1), night(2)], d);
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))], 'success', other));
+    const r = await attestRoot(R, d);
     expect(r).toEqual({ skipped: 'error', error: 'replaced', txHash: SENT, nonce: 7 });
-    expect('uids' in r).toBe(false);
+    expect('uid' in r).toBe(false);
     publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))], 'success', other.toUpperCase().replace('0X', '0x') as Hex));
     expect(await attestOne(night(), d)).toMatchObject({ error: 'replaced' });
     publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))], 'success', SENT.toUpperCase().replace('0X', '0x') as Hex));
@@ -215,20 +207,12 @@ describe('persist before send; after that the tx hash is never lost', () => {
     const { d, publicClient } = deps();
     publicClient.waitForTransactionReceipt.mockResolvedValue(mined([], 'reverted'));
     expect(await attestOne(night(), d)).toEqual({ skipped: 'error', error: 'reverted', txHash: SENT, nonce: 7 });
-  });
-
-  it('mined but logs do not match the batch -> skipped error WITH txHash (settled later, never re-sent)', async () => {
-    const { d, publicClient } = deps();
-    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))]));
-    expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'uid_count_mismatch', txHash: SENT, nonce: 7 });
+    expect(await attestRoot(R, d)).toEqual({ skipped: 'error', error: 'reverted', txHash: SENT, nonce: 7 });
   });
 });
 
 describe('nightly root attestation', () => {
-  const root = (o: Partial<NightRoot> = {}): NightRoot => ({
-    root: keccak256(toBytes('root')), night: 20261106, count: 52, agentId: 42n,
-    manifestURI: `https://example.test/api/v1/manifest/${keccak256(toBytes('m'))}`, ...o,
-  });
+  const root = (o: Partial<NightRoot> = {}): NightRoot => ({ ...R, ...o });
 
   it('schema string, uid, encode/decode round trip', () => {
     expect(ROOT_SCHEMA).toBe('bytes32 root,uint32 night,uint16 count,uint256 agentId,string manifestURI');
