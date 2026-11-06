@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideStatus, computeRecord, RULES_TEXT, REASONS } from '@/lib/shift/rules';
+import { decideStatus, computeRecord, RULES_TEXT, REASONS, NOTE_REASONS } from '@/lib/shift/rules';
 import type { EvidenceBundle, AdapterResult, LiveAppFacts, RepoFacts, ChainFacts, VibestarterFacts, CommitFact, Status, SourceName } from '@/lib/types';
 
 const live = (o: Partial<LiveAppFacts> = {}): AdapterResult<LiveAppFacts> => ({
@@ -52,7 +52,7 @@ describe('decideStatus', () => {
     ['up, nothing changed', { liveapp: live(), repo: repo(), chain: chain() }, 'quiet', ['none']],
     ['contract txCount alone is not a ship', { chain: chain({ contracts: [{ chainId: 8453, address: '0x1', txCount: 999, uniqueSenders: 50 }] }) }, 'quiet', ['none']],
     ['founder-reported activity alone is quiet', { liveapp: live(), vibestarter: vs() }, 'quiet', ['none']],
-    ['vibestarter alone with reports is quiet', { vibestarter: vs() }, 'quiet', ['none']],
+    ['vibestarter alone with reports is unavailable', { vibestarter: vs() }, 'unavailable', ['all.unavailable']],
     ['site down, nothing shipped', { liveapp: live({ up: false, httpStatus: 500 }) }, 'down', ['liveapp.down']],
     ['site down + only cosmetic commits', { liveapp: live({ up: false }), repo: repo({ commits: [commit({ kind: 'cosmetic' })] }) }, 'down', ['liveapp.down']],
     ['site down but code commits -> building', { liveapp: live({ up: false }), repo: repo({ commits: [commit()] }) }, 'building', ['repo.code_commits', 'liveapp.down']],
@@ -64,15 +64,15 @@ describe('decideStatus', () => {
     ['failed live app + quiet repo is quiet, not down', { liveapp: failed('liveapp', 'network'), repo: repo() }, 'quiet', ['none', 'source.liveapp.failed']],
     ['null sources are ignored', { liveapp: live() }, 'quiet', ['none']],
     ['all present failed -> unavailable', { liveapp: failed('liveapp'), repo: failed('repo', 'invalid_repo'), chain: failed('chain', 'x', true) }, 'unavailable', ['all.unavailable', 'source.repo.failed', 'source.liveapp.failed', 'source.chain.failed']],
-    ['failed live app + ok vibestarter is quiet', { liveapp: failed('liveapp'), vibestarter: vs() }, 'quiet', ['none', 'source.liveapp.failed']],
+    ['failed live app + ok vibestarter is unavailable', { liveapp: failed('liveapp'), vibestarter: vs() }, 'unavailable', ['all.unavailable', 'source.liveapp.failed']],
     ['failed live app + failed vibestarter -> unavailable', { liveapp: failed('liveapp'), vibestarter: failed('vibestarter') }, 'unavailable', ['all.unavailable', 'source.liveapp.failed', 'source.vibestarter.failed']],
   ];
   it.each(cases)('%s', (_n, sources, status, reasons) => {
     expect(decideStatus(bundle(sources))).toEqual({ status, reasons });
   });
 
-  it('no sources at all -> quiet/none (nothing failed)', () => {
-    expect(decideStatus(bundle({}))).toEqual({ status: 'quiet', reasons: ['none'] });
+  it('no sources at all -> unavailable', () => {
+    expect(decideStatus(bundle({}))).toEqual({ status: 'unavailable', reasons: ['all.unavailable'] });
   });
 });
 
@@ -80,6 +80,9 @@ describe('RULES_TEXT', () => {
   it('mentions every reason code', () => {
     const text = RULES_TEXT.join('\n');
     for (const code of REASONS) expect(text, code).toContain(code);
+    for (const code of NOTE_REASONS.filter((c) => !c.startsWith('source.'))) expect(text, code).toContain(code);
+    expect(text).toContain('source.<name>.failed');
+    for (const name of ['repo', 'liveapp', 'chain', 'vibestarter']) expect(NOTE_REASONS).toContain(`source.${name}.failed`);
     expect(RULES_TEXT.every((s) => s.trim().length > 0)).toBe(true);
   });
 });

@@ -11,6 +11,15 @@ export const REASONS = [
   'none',
 ] as const;
 
+/** Informational reasons appended after the verdict reasons. */
+export const NOTE_REASONS = [
+  'liveapp.blocked',
+  'source.repo.failed',
+  'source.liveapp.failed',
+  'source.chain.failed',
+  'source.vibestarter.failed',
+] as const;
+
 /** Human-readable rules, one sentence each. Shown verbatim on /methodology. Keep in sync with decideStatus. */
 export const RULES_TEXT: string[] = [
   'Each night covers the 24 hours ending at the shift time, and only verified evidence (what we observed ourselves) decides the status.',
@@ -18,11 +27,11 @@ export const RULES_TEXT: string[] = [
   'Building: not shipped, and at least one commit by a non-bot author touched code rather than only docs, styling or config (repo.code_commits).',
   'Down: the live app failed twice in a row (a non-2xx/3xx response or a timeout) and nothing else shipped that night (liveapp.down).',
   'Quiet: none of the above - the app is not known to be down and no verified change was seen (none).',
-  'Unavailable: every source that applies to the project failed to answer, so we make no claim either way (all.unavailable).',
-  'Precedence is shipped, then building, then down, then quiet; unavailable applies only when every applicable source failed.',
+  'Unavailable: none of the repo, live app or chain answered, or none of them applies to the project, so we make no claim either way (all.unavailable).',
+  'Precedence is shipped, then building, then down, then quiet; unavailable applies only when none of repo, live app or chain answered.',
   'A site that answers 401, 403 or 429 is blocking our check, not down; we note it as liveapp.blocked and it never counts as down.',
   'A source that fails while others succeed is noted as source.<name>.failed and the status is decided from the rest.',
-  'Founder updates, Vibestarter activity feeds and contract usage counts are reported or informational and never make a night shipped or building.',
+  'Vibestarter records never count toward any status; founder updates, Vibestarter activity feeds and contract usage counts are reported or informational and never make a night shipped or building.',
   'Streak is the run of consecutive shipped or building nights ending at the latest night; unavailable or missing nights neither extend nor break it, while quiet and down nights end it.',
   'Lit30 is the number of shipped or building nights among the 30 calendar nights ending today, and last ship is the latest night with status shipped.',
   'An AI model may explain a night afterwards but can never change its status.',
@@ -42,7 +51,8 @@ export function decideStatus(b: EvidenceBundle): Decision {
       s.name === 'liveapp' && s.error?.startsWith(BLOCKED_PREFIX) ? 'liveapp.blocked' : `source.${s.name}.failed`,
     );
 
-  if (present.length > 0 && present.every((s) => !s.ok)) {
+  const bearing = present.filter((s) => s.name !== 'vibestarter');
+  if (bearing.length === 0 || bearing.every((s) => !s.ok)) {
     return { status: 'unavailable', reasons: ['all.unavailable', ...failedInfo] };
   }
 
