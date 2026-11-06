@@ -2,6 +2,7 @@ import { getDb } from '@/lib/db';
 import { bearerEquals, json } from '@/lib/net/http';
 import { safeErrorCode } from '@/lib/net/redact';
 import { makeShiftDeps } from '@/lib/shift/deps';
+import { withNotify } from '@/lib/notify/send';
 import { maybeFinalizeStale } from '@/lib/shift/finalize';
 
 export const runtime = 'nodejs';
@@ -18,7 +19,7 @@ export async function GET(req: Request): Promise<Response> {
   if (!bearerEquals(req.headers.get('authorization'), secret)) return json({ error: 'unauthorized' }, 401);
   try {
     const db = await getDb();
-    const finalized = await maybeFinalizeStale(makeShiftDeps(db, { kind: 'nightly' }));
+    const finalized = await maybeFinalizeStale(withNotify(makeShiftDeps(db, { kind: 'nightly' })));
     return json({ finalized }, 200);
   } catch (e) {
     console.error('shift.finalize-stale failed:', safeErrorCode(e));

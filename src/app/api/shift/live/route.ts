@@ -4,6 +4,7 @@ import { getProjectBySlug, updateLiveRun } from '@/lib/db/queries';
 import { json } from '@/lib/net/http';
 import { safeErrorCode } from '@/lib/net/redact';
 import { makeShiftDeps } from '@/lib/shift/deps';
+import { withNotify } from '@/lib/notify/send';
 import { checkLiveLimit, clientIp, hashIp } from '@/lib/shift/limits';
 import { utcDay } from '@/lib/shift/night';
 import { liveWindow, runProject, type RunResult } from '@/lib/shift/run';
@@ -48,7 +49,7 @@ export async function GET(req: Request): Promise<Response> {
     const db = await getDb();
     const project = await getProjectBySlug(db, slug);
     if (!project || project.hidden) return json({ error: 'not_found' }, 404);
-    const deps = makeShiftDeps(db, { kind: 'live' });
+    const deps = withNotify(makeShiftDeps(db, { kind: 'live' }));
     const now = deps.now();
     const window = await liveWindow(db, project.id, now); // before the reservation: nothing below can strand it
     const ipHash = hashIp(clientIp(req.headers), utcDay(now), secret);

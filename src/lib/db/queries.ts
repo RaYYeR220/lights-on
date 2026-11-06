@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { Db } from './index';
 import {
-  projects, nights, liveRuns, evidence, snapshots, budget, shifts,
+  projects, nights, liveRuns, evidence, snapshots, budget, shifts, trancheEvents,
   type ProjectRow, type NewProject, type NightRow, type NewNight, type LiveRunRow, type NewLiveRun, type SnapshotRow,
   type ShiftRow,
 } from './schema';
@@ -463,4 +463,29 @@ export async function deleteReconstructedGitNightsBefore(db: Db, projectId: numb
     ))
     .returning({ id: nights.id });
   return rows.length;
+}
+
+// ---- notifications ----
+
+/** Earliest still-open challenge window per project (window ends after `now`). */
+export async function getOpenTranches(db: Db, ids: number[], now: Date): Promise<(typeof trancheEvents.$inferSelect)[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select()
+    .from(trancheEvents)
+    .where(and(inArray(trancheEvents.projectId, ids), gt(trancheEvents.windowEndsAt, now)))
+    .orderBy(asc(trancheEvents.windowEndsAt));
+  const seen = new Set<number>();
+  return rows.filter((r) => (seen.has(r.projectId) ? false : (seen.add(r.projectId), true)));
+}
+
+/** Latest nightly shift that has finished. */
+export async function getLatestFinishedNightly(db: Db): Promise<ShiftRow | null> {
+  const [row] = await db
+    .select()
+    .from(shifts)
+    .where(and(eq(shifts.kind, 'nightly'), isNotNull(shifts.finishedAt)))
+    .orderBy(desc(shifts.night))
+    .limit(1);
+  return row ?? null;
 }

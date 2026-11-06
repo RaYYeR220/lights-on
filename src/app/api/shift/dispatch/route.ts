@@ -3,6 +3,7 @@ import { getDb } from '@/lib/db';
 import { bearerEquals, json } from '@/lib/net/http';
 import { safeErrorCode } from '@/lib/net/redact';
 import { makeShiftDeps } from '@/lib/shift/deps';
+import { withNotify } from '@/lib/notify/send';
 import { dispatchShift, httpTrigger } from '@/lib/shift/dispatch';
 import { maybeFinalizeStale } from '@/lib/shift/finalize';
 
@@ -21,7 +22,7 @@ export async function GET(req: Request): Promise<Response> {
     const db = await getDb();
     // Our own deployment: the host Vercel routed this request to (or an explicit override).
     const base = process.env.INTERNAL_BASE_URL || new URL(req.url).origin;
-    const deps = { ...makeShiftDeps(db, { kind: 'nightly' }), trigger: httpTrigger(base, token) };
+    const deps = { ...withNotify(makeShiftDeps(db, { kind: 'nightly' })), trigger: httpTrigger(base, token) };
     const r = await dispatchShift(new Date(), deps);
     // Tonight's shift is created and its runs are fired; only now settle older shifts (bounded to 60 s).
     after(() => maybeFinalizeStale(deps).catch((e) => { console.error('shift.stale failed:', safeErrorCode(e)); }));

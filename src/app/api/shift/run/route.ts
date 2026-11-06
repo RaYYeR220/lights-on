@@ -4,6 +4,7 @@ import { getDb } from '@/lib/db';
 import { json, secretEquals } from '@/lib/net/http';
 import { safeErrorCode } from '@/lib/net/redact';
 import { makeShiftDeps } from '@/lib/shift/deps';
+import { withNotify } from '@/lib/notify/send';
 import { maybeFinalizeStale } from '@/lib/shift/finalize';
 import { runShiftProject } from '@/lib/shift/run';
 
@@ -27,7 +28,7 @@ export async function POST(req: Request): Promise<Response> {
   after(async () => {
     try {
       const db = await getDb();
-      const deps = makeShiftDeps(db, { kind: 'nightly', shiftId: body.shiftId });
+      const deps = withNotify(makeShiftDeps(db, { kind: 'nightly', shiftId: body.shiftId }));
       const r = await runShiftProject(body.shiftId, body.projectId, deps);
       if (!r.ok) console.warn('shift.run:', r.code);
       // Own work done: settle older stuck shifts (leased, bounded to 60 s).
