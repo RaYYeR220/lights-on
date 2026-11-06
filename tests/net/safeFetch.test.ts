@@ -1,3 +1,5 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it, expect, vi } from 'vitest';
 import { safeFetch, BlockedUrl, isBlockedAddress, guardedLookup } from '@/lib/net/safeFetch';
 
@@ -66,7 +68,7 @@ describe('safeFetch blocking', () => {
   });
 
   it('isBlockedAddress covers the ranges', () => {
-    for (const a of ['127.0.0.1', '10.9.9.9', '172.31.0.1', '192.168.1.1', '169.254.1.1', '100.127.0.1', '0.1.2.3', '::1', '::', 'fe80::abcd', 'fc00::1', 'ff02::1', '::ffff:10.0.0.1', '::ffff:7f00:1', '224.5.5.5', '198.18.0.1', '192.0.2.1', '192.0.0.5', '2002:7f00:1::', '2001:0:7f00:1::', '64:ff9b::7f00:1', '64:ff9b:1::1', 'garbage'])
+    for (const a of ['127.0.0.1', '10.9.9.9', '172.31.0.1', '192.168.1.1', '169.254.1.1', '100.127.0.1', '0.1.2.3', '::1', '::', 'fe80::abcd', 'fc00::1', 'ff02::1', '::ffff:10.0.0.1', '::ffff:7f00:1', '224.5.5.5', '198.18.0.1', '192.0.2.1', '192.0.0.5', '2002:7f00:1::', '2001:0:7f00:1::', '64:ff9b::7f00:1', '64:ff9b:1::1', '::7f00:1', '::a9fe:a9fe', 'garbage'])
       expect(isBlockedAddress(a), a).toBe(true);
     for (const a of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '100.128.0.1', '2606:4700:4700::1111', '::ffff:8.8.8.8', '2002:0808:0808::1'])
       expect(isBlockedAddress(a), a).toBe(false);
@@ -159,5 +161,51 @@ describe('DNS pinning (rebinding)', () => {
       { address: '::1', family: 6 },
     ]);
     expect(err).toBeInstanceOf(BlockedUrl);
+  });
+});
+
+describe('real Agent path (no fetch mock)', () => {
+  async function withServer<T>(fn: (port: number, hits: () => number) => Promise<T>): Promise<T> {
+    let n = 0;
+    const srv = http.createServer((_q, r) => {
+      n++;
+      r.setHeader('content-type', 'text/html');
+      r.end('<title>local</title>hello from local');
+    });
+    await new Promise<void>((ok) => srv.listen(0, '127.0.0.1', ok));
+    try {
+      return await fn((srv.address() as AddressInfo).port, () => n);
+    } finally {
+      srv.closeAllConnections();
+      await new Promise((ok) => srv.close(ok));
+    }
+  }
+
+  it('rebinding: public at check time, 127.0.0.1 at connect time -> refused, server sees 0 requests', async () => {
+    await withServer(async (port, hits) => {
+      let calls = 0;
+      const lookup = async () => [{ address: calls++ === 0 ? '93.184.216.34' : '127.0.0.1', family: 4 }];
+      let err: unknown;
+      try {
+        await safeFetch(`http://lights-test.invalid:${port}/`, { lookup, timeoutMs: 3000 });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeDefined();
+      const chain = [err, (err as Error).cause, ((err as Error).cause as Error | undefined)?.cause];
+      expect(chain.some((e) => e instanceof BlockedUrl || /blocked address/.test(String((e as Error)?.message)))).toBe(true);
+      expect(calls).toBeGreaterThanOrEqual(2);
+      expect(hits()).toBe(0);
+    });
+  });
+
+  it('positive: request succeeds end-to-end through the pinned Agent (test-only private allow)', async () => {
+    await withServer(async (port, hits) => {
+      const lookup = async () => [{ address: '127.0.0.1', family: 4 }];
+      const r = await safeFetch(`http://lights-test.invalid:${port}/`, { lookup, allowPrivateForTests: true, timeoutMs: 3000 });
+      expect(r.status).toBe(200);
+      expect(r.body).toContain('hello from local');
+      expect(hits()).toBe(1);
+    });
   });
 });
