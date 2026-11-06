@@ -46,6 +46,8 @@ export interface BackedProject {
   refundClaimed: boolean;
   /** Token balance as reported, or the raw integer when decimals() could not be read. */
   balance: string | null;
+  /** balance is the raw integer because decimals() could not be read. */
+  balanceIsRaw: boolean;
   symbol: string | null;
   status: Status | null;
   statusNight: number | null;
@@ -93,6 +95,7 @@ export async function getBackerView(db: Db, address: Address, deps: Partial<Back
       contributedEth: p.amountWei && p.amountWei !== '0' ? formatEther(BigInt(p.amountWei)) : null,
       refundClaimed: p.refundClaimed === true,
       balance: p.balance ?? p.balanceRaw ?? null,
+      balanceIsRaw: !p.balance && !!p.balanceRaw,
       symbol: p.symbol || null,
       status: pick ? pick[1].status : null,
       statusNight: pick ? pick[0] : null,
