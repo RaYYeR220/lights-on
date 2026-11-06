@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { RULES_TEXT } from "@/lib/shift/rules";
 import { RULES_VERSION } from "@/lib/shift/evidence";
-import { SCHEMA } from "@/lib/attest/eas";
+import { ROOT_SCHEMA, SCHEMA } from "@/lib/attest/eas";
 import s from "@/components/docs/docs.module.css";
 
 export const metadata: Metadata = {
@@ -104,10 +104,20 @@ export default function MethodologyPage() {
               Attestation on Base
             </h2>
             <p>
-              Each observed night is attested with EAS on Base mainnet: one <code>multiAttest</code> transaction per nightly
-              shift, one <code>attest</code> per live run. The evidence hash is keccak256 of the bundle&apos;s canonical JSON
-              (sorted keys, no whitespace), and the bundle is served byte for byte at{" "}
-              <code>/api/v1/evidence/&lt;hash&gt;</code>. The schema (non-revocable, no resolver):
+              <strong>One transaction per night: a Merkle root of every project&apos;s verdict.</strong> Each observed night of
+              a project becomes one leaf, keccak256 of its project key, night, status, lit30 and evidence hash. The leaves
+              are sorted and hashed pairwise up to a single root, and the nightly shift attests that root once, with EAS on
+              Base mainnet. Every project-night gets the same attestation uid and its own proof: the few sibling hashes that
+              lead from its leaf to the root. A shift of up to 500 projects is exactly one transaction, so the cost stays
+              flat however many projects are watched. The root attestation points at the night manifest, served byte for
+              byte at <code>/api/v1/manifest/&lt;hash&gt;</code>, which lists every leaf. Its schema (non-revocable, no
+              resolver):
+            </p>
+            <pre className={s.pre}>{ROOT_SCHEMA.split(",").join(",\n")}</pre>
+            <p>
+              The evidence hash is keccak256 of the bundle&apos;s canonical JSON (sorted keys, no whitespace), and the bundle is
+              served byte for byte at <code>/api/v1/evidence/&lt;hash&gt;</code>. A live run is attested on its own, one{" "}
+              <code>attest</code> per run, under the per-project schema:
             </p>
             <pre className={s.pre}>{SCHEMA.split(",").join(",\n")}</pre>
             <p>
@@ -123,14 +133,16 @@ export default function MethodologyPage() {
             <p>
               <strong>In the browser:</strong> open any project, click a night, then <em>Verify in this browser</em>. It
               re-hashes the published bundle, reads the attestation from Base, and checks the schema, the attester, that it is
-              not revoked or expired, and that its project, night and evidence hash match.
+              not revoked or expired, and its night. Then it rebuilds this night&apos;s leaf from the bundle and the night&apos;s
+              status and lit30, and checks that the proof leads from that leaf to the attested root. A wrong status, a wrong
+              lit30 or one changed byte of evidence and the proof no longer reaches the root.
             </p>
             <p>
               <strong>From a terminal</strong>, with the repo checked out:
             </p>
             <pre className={s.pre}>{`curl -s <site>/api/v1/evidence/<hash> > evidence.json
 pnpm tsx scripts/verify-night.ts --network base \\
-  --uid <attestation uid> --bundle evidence.json --attester <watcher address>`}</pre>
+  --uid <attestation uid> --bundle evidence.json --site <site> --attester <watcher address>`}</pre>
             <p>
               It prints PASS or FAIL per check and exits 0 only on a full match. More in the <Link className="ul" href="/docs#verify">docs</Link>.
             </p>

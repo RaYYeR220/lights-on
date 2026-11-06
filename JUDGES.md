@@ -7,8 +7,8 @@ Everything below runs in a browser with no wallet, account or funds. Site: **htt
    *Shows:* the landing reads the latest real shift, not a mock.
 
 2. **Open last night's shift.** https://lights-on-watch.vercel.app/night
-   Counts by status, every project's reading and note, and the night's attestation transaction.
-   *Shows:* one nightly `multiAttest` covers every observed project. The first observed night is `{{TBD:first-observed-night}}`; earlier nights are reconstructed and labelled as such.
+   Counts by status, every project's reading and note, the night's single attestation transaction and its manifest.
+   *Shows:* one transaction per night covers every observed project: a Merkle root of every verdict, with each night's proof published. The first observed night is `{{TBD:first-observed-night}}`; earlier nights are reconstructed and labelled as such.
 
 3. **Open a project with real history.** https://lights-on-watch.vercel.app/p/revoke-cash
    Status, streak, lit nights in the last 30, and a 90-night strip. Hatched nights were reconstructed from git history and Wayback captures; solid nights were observed by the watcher.
@@ -20,7 +20,7 @@ Everything below runs in a browser with no wallet, account or funds. Site: **htt
 
 5. **Click the latest solid night in the strip, then "Verify in this browser".**
    The drawer shows the evidence by tier (VERIFIED decides, REPORTED is shown only), the evidence hash and the attestation. Verify re-hashes the published bundle and reads the attestation from Base in your browser.
-   *Shows:* what is on Base is exactly the published evidence, checked without trusting our server: schema, attester, not revoked, not expired, project, night and hash.
+   *Shows:* what is on Base is exactly the published evidence, checked without trusting our server: schema, attester, not revoked, not expired, night, and the night's Merkle proof from its leaf (project, status, lit30, evidence hash) to the attested root.
 
 6. **Open a real backer.** https://lights-on-watch.vercel.app/b/0x60bc5323c0e0e9144af0b35ce8de119fc743e345
    A public wallet that backed Corvo Edge on Vibestarter.
@@ -43,10 +43,11 @@ Everything below runs in a browser with no wallet, account or funds. Site: **htt
    *Shows:* agents get the same answer as the page, with the attestation UID and schema UID that back it. REST mirror: https://lights-on-watch.vercel.app/api/openapi.json
 
 10. **Check the chain.**
-    - Schema: https://base.easscan.org/schema/view/0x18fe45e82c5c9b1a176794774f023536a12794a76ee877ebfb0d713166e65d8b
+    - Nightly root schema: https://base.easscan.org/schema/view/0xfe6c6dba61a36a6fbdf682e0d8bf3903a289ebb186e172c59aa9c578b673e726
+    - Live-run schema: https://base.easscan.org/schema/view/0x18fe45e82c5c9b1a176794774f023536a12794a76ee877ebfb0d713166e65d8b
     - Watcher address: https://basescan.org/address/0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6
-    - First nightly batch: https://basescan.org/tx/{{TBD:first-nightly-multiattest-tx}}
-    - One nightly attestation: https://base.easscan.org/attestation/view/{{TBD:sample-nightly-attestation-uid}}
+    - First nightly root attestation: https://basescan.org/tx/{{TBD:first-nightly-root-tx}}
+    - That night's root, shared by every project-night in it: https://base.easscan.org/attestation/view/{{TBD:sample-nightly-attestation-uid}}
     - One live-run attestation: https://base.easscan.org/attestation/view/{{TBD:live-run-attestation-uid}}
     - Watcher identity: ERC-8004 agent `{{TBD:agent-id}}`, registered in https://basescan.org/tx/{{TBD:agent-registration-tx}}
 
@@ -59,9 +60,9 @@ git clone {{TBD:repo-url}} lights-on && cd lights-on && pnpm install
 curl -s https://lights-on-watch.vercel.app/api/v1/evidence/{{TBD:sample-nightly-evidence-hash}} -o evidence.json
 pnpm tsx scripts/verify-night.ts --network base \
   --uid {{TBD:sample-nightly-attestation-uid}} --bundle evidence.json \
-  --attester 0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6
+  --site https://lights-on-watch.vercel.app --attester 0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6
 ```
 
-Read-only. It prints PASS or FAIL per check and exits 0 only on a full match.
+Read-only. It reads the night's Merkle proof from the site and checks it against the root on Base. It prints PASS or FAIL per check and exits 0 only on a full match.
 
 What each public claim rests on is in [CLAIMS.md](CLAIMS.md). How the product was built is in [BUILD.md](BUILD.md).
