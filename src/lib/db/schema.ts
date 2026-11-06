@@ -3,6 +3,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { EvidenceBundle, Step } from '@/lib/types';
+import type { NightManifest } from '@/lib/attest/manifest';
 
 export const SOURCES = ['vibestarter', 'vibeathon01', 'base', 'community'] as const;
 export const STATUSES = ['shipped', 'building', 'quiet', 'down', 'unavailable'] as const;
@@ -85,6 +86,16 @@ export const nights = pgTable('nights', {
   attestClaimedAt: tsz('attest_claimed_at'),
   /** Claim token (random uuid per claim statement): every write to a claimed row must present it. */
   attestClaimId: text('attest_claim_id'),
+  /**
+   * Nightly rows are attested as one Merkle root per batch (attestation_uid = that ROOT attestation's uid). Written
+   * with attest_tx in the same statement, before the send: this row's leaf, its proof (sibling hashes, leaf to root),
+   * the root, the lit30 the leaf commits to, and the hash of the batch's night manifest.
+   */
+  attestLeaf: text('attest_leaf'),
+  attestProof: text('attest_proof').array(),
+  attestRoot: text('attest_root'),
+  attestLit30: integer('attest_lit30'),
+  attestManifest: text('attest_manifest'),
   aiModel: text('ai_model'),
   aiOk: boolean('ai_ok').notNull().default(false),
   createdAt: tsz('created_at').notNull().defaultNow(),
@@ -93,6 +104,15 @@ export const nights = pgTable('nights', {
   index('nights_night_idx').on(t.night),
   check('nights_status_chk', inList('status', STATUSES)),
 ]);
+
+/** Canonical manifests of nightly root attestations, content-addressed (hash = keccak256 of the canonical body). */
+export const nightManifests = pgTable('night_manifests', {
+  hash: text('hash').primaryKey(),
+  night: date('night', { mode: 'string' }).notNull(),
+  root: text('root').notNull(),
+  body: jsonb('body').$type<NightManifest>().notNull(),
+  createdAt: tsz('created_at').notNull().defaultNow(),
+}, (t) => [index('night_manifests_night_idx').on(t.night)]);
 
 export const liveRuns = pgTable('live_runs', {
   id: serial('id').primaryKey(),

@@ -5,6 +5,7 @@ import {
   upsertProject, listProjects, getProjectBySlug, insertNight, getNights, getLatestNightly,
   DuplicateNight, bumpBudget, saveEvidence, getEvidence, insertLiveRun, updateLiveRun,
   saveSnapshot, getLastSnapshot, upsertReconstructedNight, appendShiftTxs, createNightlyShift, getShift,
+  saveNightManifest, getNightManifest,
 } from '@/lib/db/queries';
 import type { EvidenceBundle } from '@/lib/types';
 
@@ -42,6 +43,17 @@ describe('db queries', () => {
     await saveEvidence(db, '0xabc', p.id, '2026-11-05', { ...b, night: 2 } as unknown as EvidenceBundle);
     expect((await getEvidence(db, '0xabc'))?.night).toBe(1);
     expect(await getEvidence(db, '0xnope')).toBeNull();
+  });
+
+  it('night manifests are content-addressed: first write wins, read back by hash', async () => {
+    const hash = `0x${'ab'.repeat(32)}`;
+    const root = `0x${'cd'.repeat(32)}`;
+    const body = { v: 1, schema: 'lights-on/night-manifest', night: 20261106, count: 1, leaves: [], root, agentId: '7' };
+    await saveNightManifest(db, hash, '2026-11-06', root, body);
+    await saveNightManifest(db, hash, '2026-11-06', root, { ...body, count: 99 }); // no-op
+    expect(await getNightManifest(db, hash)).toEqual(body);
+    expect(await getNightManifest(db, hash.toUpperCase().replace('0X', '0x'))).toEqual(body); // keys are lowercase
+    expect(await getNightManifest(db, `0x${'ef'.repeat(32)}`)).toBeNull();
   });
 
   it('listProjects hides hidden by default', async () => {

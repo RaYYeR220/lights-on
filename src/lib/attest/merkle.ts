@@ -56,7 +56,7 @@ export function verifyProof(leaf: Hex, proof: readonly Hex[], root: Hex): boolea
   let h = lc(leaf);
   for (const p of proof) {
     if (typeof p !== 'string' || !WORD.test(p)) return false;
-    h = hashPair(h, p);
+    h = hashPair(h, p as Hex);
   }
   return h === lc(root);
 }

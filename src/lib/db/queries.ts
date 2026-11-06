@@ -1,11 +1,12 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { Db } from './index';
 import {
-  projects, nights, liveRuns, evidence, snapshots, budget, shifts, trancheEvents,
+  projects, nights, liveRuns, evidence, snapshots, budget, shifts, trancheEvents, nightManifests,
   type ProjectRow, type NewProject, type NightRow, type NewNight, type LiveRunRow, type NewLiveRun, type SnapshotRow,
   type ShiftRow,
 } from './schema';
 import type { EvidenceBundle, TrancheFact } from '@/lib/types';
+import type { NightManifest } from '@/lib/attest/manifest';
 
 export class DuplicateNight extends Error {
   constructor(projectId: number, night: string, observed: boolean) {
@@ -129,6 +130,16 @@ export async function saveEvidence(
 export async function getEvidence(db: Db, hash: string): Promise<EvidenceBundle | null> {
   const [row] = await db.select().from(evidence).where(eq(evidence.hash, hash)).limit(1);
   return row?.bundle ?? null;
+}
+
+/** Content-addressed like evidence: first write wins. Keys are stored lowercase. */
+export async function saveNightManifest(db: Db, hash: string, night: string, root: string, body: NightManifest | Record<string, unknown>): Promise<void> {
+  await db.insert(nightManifests).values({ hash: hash.toLowerCase(), night, root: root.toLowerCase(), body: body as NightManifest }).onConflictDoNothing();
+}
+
+export async function getNightManifest(db: Db, hash: string): Promise<NightManifest | null> {
+  const [row] = await db.select({ body: nightManifests.body }).from(nightManifests).where(eq(nightManifests.hash, hash.toLowerCase())).limit(1);
+  return row?.body ?? null;
 }
 
 export async function saveSnapshot(

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, keccak256, toBytes, zeroAddress, type Hex } from 'viem';
+import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodePacked, keccak256, toBytes, zeroAddress, type Hex } from 'viem';
 import {
-  attestMany, attestOne, attestationStatus, computeFees, decodeNight, encodeNight, schemaUid, SCHEMA, type AttestDeps, type NightAttestation,
+  attestMany, attestOne, attestRoot, attestationStatus, computeFees, decodeNight, decodeRoot, encodeNight, encodeRoot, rootSchemaUid,
+  schemaUid, ROOT_SCHEMA, SCHEMA, type AttestDeps, type NightAttestation, type NightRoot,
 } from '@/lib/attest/eas';
 import { EAS_ADDRESS, easAbi } from '@/lib/attest/abi';
 
@@ -220,6 +221,70 @@ describe('persist before send; after that the tx hash is never lost', () => {
     const { d, publicClient } = deps();
     publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))]));
     expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'uid_count_mismatch', txHash: SENT, nonce: 7 });
+  });
+});
+
+describe('nightly root attestation', () => {
+  const root = (o: Partial<NightRoot> = {}): NightRoot => ({
+    root: keccak256(toBytes('root')), night: 20261106, count: 52, agentId: 42n,
+    manifestURI: `https://example.test/api/v1/manifest/${keccak256(toBytes('m'))}`, ...o,
+  });
+
+  it('schema string, uid, encode/decode round trip', () => {
+    expect(ROOT_SCHEMA).toBe('bytes32 root,uint32 night,uint16 count,uint256 agentId,string manifestURI');
+    expect(rootSchemaUid()).toBe(keccak256(encodePacked(['string', 'address', 'bool'], [ROOT_SCHEMA, zeroAddress, false])));
+    expect(rootSchemaUid()).not.toBe(schemaUid());
+    const r = root();
+    expect(decodeRoot(encodeRoot(r))).toEqual(r);
+  });
+
+  it('one attest call under the root schema, through the same persist-before-send path', async () => {
+    const { d, publicClient, signTransaction, sendRawTransaction, onBroadcast } = deps();
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))]));
+    expect(await attestRoot(root(), d)).toEqual({ uid: uid(1), txHash: SENT });
+    const call = decodeFunctionData({ abi: easAbi, data: (signTransaction.mock.calls[0]![0] as { data: Hex }).data });
+    expect(call.functionName).toBe('attest');
+    const req = (call.args as unknown as [{ schema: Hex; data: { data: Hex; revocable: boolean; expirationTime: bigint } }])[0];
+    expect(req.schema).toBe(rootSchemaUid());
+    expect(req.data).toMatchObject({ revocable: false, expirationTime: 0n });
+    expect(decodeRoot(req.data.data)).toEqual(root());
+    expect(onBroadcast).toHaveBeenCalledWith(SENT, 7, zeroAddress);
+    expect(onBroadcast.mock.invocationCallOrder[0]).toBeLessThan(sendRawTransaction.mock.invocationCallOrder[0]);
+  });
+
+  it('the uid count check is 1: no Attested log, or two, is an error that keeps the tx hash', async () => {
+    for (const logs of [[], [attestedLog(uid(1)), attestedLog(uid(2))]]) {
+      const { d, publicClient } = deps();
+      publicClient.waitForTransactionReceipt.mockResolvedValue(mined(logs));
+      expect(await attestRoot(root(), d)).toEqual({ skipped: 'error', error: 'uid_count_mismatch', txHash: SENT, nonce: 7 });
+    }
+  });
+
+  it('keeps every guard: no hook -> no_persist, over the cap -> nothing signed, send error after persist -> txHash', async () => {
+    const a = deps();
+    expect(await attestRoot(root(), { ...a.d, onBroadcast: undefined })).toEqual({ skipped: 'error', error: 'no_persist' });
+    expect(a.signTransaction).not.toHaveBeenCalled();
+    const b = deps({ budget: async () => false });
+    expect(await attestRoot(root(), b.d)).toEqual({ skipped: 'gas_cap' });
+    expect(b.signTransaction).not.toHaveBeenCalled();
+    const c = deps({ sendErr: Object.assign(new Error('x'), { name: 'TimeoutError' }) });
+    expect(await attestRoot(root(), c.d)).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
+    expect(c.release).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed root before anything is estimated', async () => {
+    for (const bad of [root({ count: 0 }), root({ count: 65_536 }), root({ root: '0x1234' as Hex }), root({ night: 0 })]) {
+      const { d, publicClient } = deps();
+      expect(await attestRoot(bad, d)).toEqual({ skipped: 'error', error: 'invalid_root' });
+      expect(publicClient.estimateContractGas).not.toHaveBeenCalled();
+    }
+  });
+
+  it('any number of project-nights reserves the gas of one attestation', async () => {
+    const { d, budget } = deps({ baseFee: 5_000_000n, tip: 1_000_000n });
+    d.publicClient.estimateContractGas = (async () => 120_000n) as never;
+    await attestRoot(root({ count: 500 }), d);
+    expect(budget.mock.calls[0]![0]).toBe(144_000n * 11_000_000n); // 1.2 x 120k gas x (2 x 0.005 + 0.001 gwei)
   });
 });
 

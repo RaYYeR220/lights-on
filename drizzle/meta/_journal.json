@@ -85,6 +85,13 @@
       "when": 1793960525149,
       "tag": "0011_shift_attest_txs",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793968112748,
+      "tag": "0012_merkle_root",
+      "breakpoints": true
     }
   ]
 }

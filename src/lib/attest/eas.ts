@@ -6,13 +6,22 @@ import { safeErrorCode } from '@/lib/net/redact';
 import { EAS_ADDRESS, easAbi } from './abi';
 import type { AnyPublicClient } from './signer';
 
+/** Per-project schema: every live run (kind 1) is one attestation under it. */
 export const SCHEMA =
   'bytes32 projectKey,uint32 night,uint8 kind,uint8 status,uint16 lit30,bytes32 evidenceHash,uint256 agentId,string evidenceURI';
+
+/**
+ * Nightly root schema: one attestation per night (per claim batch) whose `root` is the Merkle root of every
+ * project-night of the batch (leaf encoding in ./manifest.ts). `manifestURI` serves the canonical manifest of leaves.
+ */
+export const ROOT_SCHEMA = 'bytes32 root,uint32 night,uint16 count,uint256 agentId,string manifestURI';
 
 export interface NightAttestation {
   projectKey: Hex; night: number; kind: 0 | 1; status: 1 | 2 | 3 | 4 | 5;
   lit30: number; evidenceHash: Hex; agentId: bigint; evidenceURI: string;
 }
+
+export interface NightRoot { root: Hex; night: number; count: number; agentId: bigint; manifestURI: string }
 
 /**
  * Not attested. `txHash` is set whenever a signed tx was handed to the network (send error, receipt wait failed,
@@ -63,10 +72,20 @@ export function computeFees(baseFee: bigint, estimatedTip: bigint) {
 }
 
 const PARAMS = parseAbiParameters(SCHEMA);
+const ROOT_PARAMS = parseAbiParameters(ROOT_SCHEMA);
 const ZERO32 = ('0x' + '00'.repeat(32)) as Hex;
 
+const uidOf = (schema: string, resolver: Address, revocable: boolean): Hex =>
+  keccak256(encodePacked(['string', 'address', 'bool'], [schema, resolver, revocable]));
+
+/** UID of the per-project schema (live runs). */
 export function schemaUid(resolver: Address = zeroAddress, revocable = false): Hex {
-  return keccak256(encodePacked(['string', 'address', 'bool'], [SCHEMA, resolver, revocable]));
+  return uidOf(SCHEMA, resolver, revocable);
+}
+
+/** UID of the nightly root schema. */
+export function rootSchemaUid(resolver: Address = zeroAddress, revocable = false): Hex {
+  return uidOf(ROOT_SCHEMA, resolver, revocable);
 }
 
 export function encodeNight(n: NightAttestation): Hex {
@@ -78,9 +97,17 @@ export function decodeNight(data: Hex): NightAttestation {
   return { projectKey, night, kind: kind as 0 | 1, status: status as 1 | 2 | 3 | 4 | 5, lit30, evidenceHash, agentId, evidenceURI };
 }
 
-function requestData(n: NightAttestation) {
-  return { recipient: zeroAddress, expirationTime: 0n, revocable: false, refUID: ZERO32, data: encodeNight(n), value: 0n };
+export function encodeRoot(r: NightRoot): Hex {
+  return encodeAbiParameters(ROOT_PARAMS, [r.root, r.night, r.count, r.agentId, r.manifestURI]);
 }
+
+export function decodeRoot(data: Hex): NightRoot {
+  const [root, night, count, agentId, manifestURI] = decodeAbiParameters(ROOT_PARAMS, data);
+  return { root, night, count, agentId, manifestURI };
+}
+
+const request = (data: Hex) => ({ recipient: zeroAddress, expirationTime: 0n, revocable: false, refUID: ZERO32, data, value: 0n });
+const requestData = (n: NightAttestation) => request(encodeNight(n));
 
 type Logs = readonly { address: string; topics: readonly Hex[]; data: Hex }[];
 
@@ -165,6 +192,26 @@ export async function attestOne(n: NightAttestation, deps: AttestDeps): Promise<
     return { uid, txHash: r.txHash };
   } catch (e) {
     return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash, nonce: r.nonce };
+  }
+}
+
+/**
+ * The nightly attestation: ONE `attest` under the root schema, however many project-nights the root covers. Same
+ * send path as everything else (reserve, sign locally, persist, send); a mined tx must carry exactly one EAS
+ * `Attested` log, anything else is `uid_count_mismatch` with the tx hash kept (settled later, never re-sent).
+ */
+export async function attestRoot(r: NightRoot, deps: AttestDeps): Promise<{ uid: Hex; txHash: Hex } | Skipped> {
+  const valid = /^0x[0-9a-fA-F]{64}$/.test(r.root) && Number.isInteger(r.count) && r.count >= 1 && r.count <= 65_535
+    && Number.isInteger(r.night) && r.night >= 20200101 && r.night <= 20991231;
+  if (!valid) return { skipped: 'error', error: 'invalid_root' };
+  const res = await send({ functionName: 'attest', args: [{ schema: rootSchemaUid(), data: request(encodeRoot(r)) }] }, deps);
+  if ('skipped' in res) return res;
+  try {
+    const uids = uidsFrom(res.logs);
+    if (uids.length !== 1) return { skipped: 'error', error: 'uid_count_mismatch', txHash: res.txHash, nonce: res.nonce };
+    return { uid: uids[0], txHash: res.txHash };
+  } catch (e) {
+    return { skipped: 'error', error: safeErrorCode(e), txHash: res.txHash, nonce: res.nonce };
   }
 }
 
