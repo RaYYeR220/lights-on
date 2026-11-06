@@ -159,7 +159,7 @@ describe('runShiftProject', () => {
     expect(deps.attestMany).toHaveBeenCalledTimes(1);
     expect((deps.attestMany as ReturnType<typeof vi.fn>).mock.calls[0][0]).toHaveLength(2);
     const s = await getShift(db, shift.id);
-    expect(s).toMatchObject({ done: 2, status: 'attested', attestTx: TX });
+    expect(s).toMatchObject({ done: 2, status: 'attested', attestTxs: [TX] });
   });
 
   it('a run that crashes (db write fails once) still counts as done; finalize fills its night as unavailable', async () => {

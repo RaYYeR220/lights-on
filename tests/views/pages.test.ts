@@ -3,7 +3,11 @@ import { makeTestDb } from '../helpers/db';
 import type { Db } from '@/lib/db';
 import { createNightlyShift, insertNight, saveEvidence, upsertProject } from '@/lib/db/queries';
 import { getProjectView } from '@/lib/views/project';
-import { getNightView } from '@/lib/views/night';
+import { getNightView, shiftTxs } from '@/lib/views/night';
+import { appendShiftTxs, updateShift } from '@/lib/db/queries';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { NightShift } from '@/components/night/NightShift';
 import { openWindowOf, parseCampaigns } from '@/lib/views/vibestarterLive';
 import { founderNotes } from '@/lib/db/schema';
 import { nightLabel, parseNightParam, reasonLines, reasonText } from '@/lib/views/reasons';
@@ -14,6 +18,9 @@ import type { EvidenceBundle } from '@/lib/types';
 let db: Db;
 beforeEach(async () => { db = await makeTestDb(); });
 const NOW = new Date('2026-11-06T12:00:00Z');
+const TXA = `0x${'aa'.repeat(32)}`;
+const TXB = `0x${'bb'.repeat(32)}`;
+const TXC = `0x${'cc'.repeat(32)}`;
 
 describe('reasons', () => {
   it('every reason code the rules emit has plain words', () => {
@@ -136,15 +143,15 @@ describe('getNightView', () => {
     const a = await upsertProject(db, { slug: 'a', name: 'A', source: 'base' });
     const b = await upsertProject(db, { slug: 'b', name: 'B', source: 'base' });
     const { shift } = await createNightlyShift(db, { night: '2026-11-06', startedAt: new Date('2026-11-06T05:00:00Z'), planned: 2 });
-    await insertNight(db, { projectId: b.id, night: '2026-11-06', status: 'shipped', observed: true, shiftId: shift.id, attestTx: '0xaa', attestationUid: '0x1', notable: ['New pools page'] });
-    await insertNight(db, { projectId: a.id, night: '2026-11-06', status: 'quiet', observed: true, shiftId: shift.id, attestTx: '0xaa', attestationUid: '0x2' });
+    await insertNight(db, { projectId: b.id, night: '2026-11-06', status: 'shipped', observed: true, shiftId: shift.id, attestTx: TXA, attestationUid: '0x1', notable: ['New pools page'] });
+    await insertNight(db, { projectId: a.id, night: '2026-11-06', status: 'quiet', observed: true, shiftId: shift.id, attestTx: TXA, attestationUid: '0x2' });
     await insertNight(db, { projectId: a.id, night: '2026-11-06', status: 'building', observed: false });
     const v = await getNightView(db);
     expect(v.mode).toBe('observed');
     expect(v.rows.map((r) => r.slug)).toEqual(['b', 'a']);
     expect(v.rows.every((r) => r.observed)).toBe(true);
     expect(v.counts).toMatchObject({ shipped: 1, quiet: 1, building: 0 });
-    expect(v.txs).toEqual(['0xaa']);
+    expect(v.txs).toEqual([TXA]);
     expect(v.rows[0].whatShipped).toEqual(['New pools page']);
     expect(v.shift?.planned).toBe(2);
     // community-added projects are unlisted: never on the shift page
@@ -156,5 +163,28 @@ describe('getNightView', () => {
     expect(old.mode).toBe('empty');
     expect(old.prev).toBeNull();
     expect(old.next).toBe(20261106);
+  });
+  it('a shift with several multiAttest batches: one tx per link, never a joined string', async () => {
+    const ps = [];
+    for (const slug of ['a', 'b', 'c']) ps.push(await upsertProject(db, { slug, name: slug.toUpperCase(), source: 'base' }));
+    const { shift } = await createNightlyShift(db, { night: '2026-11-06', startedAt: new Date('2026-11-06T05:00:00Z'), planned: 3 });
+    const txOf = [TXA, TXB, TXC];
+    for (let i = 0; i < 3; i++) {
+      await insertNight(db, { projectId: ps[i].id, night: '2026-11-06', status: 'quiet', observed: true, shiftId: shift.id, attestTx: txOf[i], attestationUid: `0x${i + 1}` });
+    }
+    await appendShiftTxs(db, shift.id, [TXA, TXB]);
+    await appendShiftTxs(db, shift.id, [TXB, TXC]); // a later pass: TXB is not added twice
+    const v = await getNightView(db);
+    expect(v.shift?.attestTxs).toEqual([TXA, TXB, TXC]);
+    expect(v.txs).toEqual([TXA, TXB, TXC]);
+    expect(v.txs.every((t) => !t.includes(','))).toBe(true);
+    const html = renderToStaticMarkup(createElement(NightShift, { view: v, asked: null, now: NOW.getTime() }));
+    const hrefs = [...html.matchAll(/href="https:\/\/basescan\.org\/tx\/([^"]+)"/g)].map((m) => m[1]);
+    expect(hrefs).toEqual([TXA, TXB, TXC]);
+  });
+
+  it('shiftTxs splits legacy comma-joined values and drops anything that is not a tx hash', () => {
+    expect(shiftTxs([`${TXA},${TXB}`], [TXB, null, 'nope', `${TXC} `])).toEqual([TXA, TXB, TXC]);
+    expect(shiftTxs(null, [])).toEqual([]);
   });
 });

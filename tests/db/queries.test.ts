@@ -4,7 +4,7 @@ import type { Db } from '@/lib/db';
 import {
   upsertProject, listProjects, getProjectBySlug, insertNight, getNights, getLatestNightly,
   DuplicateNight, bumpBudget, saveEvidence, getEvidence, insertLiveRun, updateLiveRun,
-  saveSnapshot, getLastSnapshot, upsertReconstructedNight,
+  saveSnapshot, getLastSnapshot, upsertReconstructedNight, appendShiftTxs, createNightlyShift, getShift,
 } from '@/lib/db/queries';
 import type { EvidenceBundle } from '@/lib/types';
 
@@ -92,5 +92,17 @@ describe('getDb', () => {
     expect(rows.map((r) => [r.observed, r.status])).toEqual([[false, 'shipped'], [true, 'building']]);
     expect(rows[0].evidenceHash).toBe('0xa');
     await expect(upsertReconstructedNight(db, nightRow(p.id, '2026-11-05', { observed: true }))).rejects.toThrow();
+  });
+  it('appendShiftTxs: concurrent appends keep every tx once, in order', async () => {
+    const { shift } = await createNightlyShift(db, { night: '2026-11-06', startedAt: new Date('2026-11-06T05:00:00Z'), planned: 1 });
+    const t = (c: string) => `0x${c.repeat(64)}`;
+    await Promise.all([appendShiftTxs(db, shift.id, [t('1'), t('2')]), appendShiftTxs(db, shift.id, [t('3')]), appendShiftTxs(db, shift.id, [t('2'), t('4')])]);
+    const txs = (await getShift(db, shift.id))?.attestTxs ?? [];
+    expect([...txs].sort()).toEqual([t('1'), t('2'), t('3'), t('4')]);
+    expect(txs.indexOf(t('1'))).toBeLessThan(txs.indexOf(t('2')));
+    await appendShiftTxs(db, shift.id, [t('1'), t('1'), '']);
+    expect((await getShift(db, shift.id))?.attestTxs).toEqual(txs);
+    await appendShiftTxs(db, shift.id, []);
+    expect((await getShift(db, shift.id))?.attestTxs).toEqual(txs);
   });
 });

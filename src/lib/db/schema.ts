@@ -48,7 +48,8 @@ export const shifts = pgTable('shifts', {
   finishedAt: tsz('finished_at'),
   planned: integer('planned').notNull().default(0),
   done: integer('done').notNull().default(0),
-  attestTx: text('attest_tx'),
+  /** Every multiAttest tx of the shift, in send order (appended atomically, never duplicated). */
+  attestTxs: text('attest_tx').array(),
   gasUsed: numeric('gas_used', { mode: 'string' }),
   status: text('status').notNull().default('running'),
   /** Per-shift caps (LLM tokens, GitHub REST calls); the per-day caps live in `budget`. */

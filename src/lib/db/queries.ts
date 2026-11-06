@@ -273,6 +273,22 @@ export async function updateShift(db: Db, id: number, patch: Partial<typeof shif
 }
 
 /**
+ * Append multiAttest txs to a shift, in order, skipping any already recorded. One statement: concurrent finalize
+ * passes never lose each other's txs (the row lock serializes them and the second re-reads the appended array).
+ */
+export async function appendShiftTxs(db: Db, shiftId: number, txs: string[]): Promise<void> {
+  const add = [...new Set(txs.filter((t) => typeof t === 'string' && t.length > 0))];
+  if (add.length === 0) return;
+  const arr = sql`ARRAY[${sql.join(add.map((t) => sql`${t}::text`), sql`, `)}]`;
+  await db.execute(sql`
+    UPDATE shifts SET attest_tx = COALESCE(shifts.attest_tx, '{}'::text[]) || ARRAY(
+      SELECT u.t FROM unnest(${arr}) WITH ORDINALITY AS u(t, i)
+      WHERE NOT (u.t = ANY(COALESCE(shifts.attest_tx, '{}'::text[])))
+      ORDER BY u.i)
+    WHERE id = ${shiftId}`);
+}
+
+/**
  * Nightly shifts (at most 48 h old, newest first) that need a finalize pass: never finished and dispatched more than
  * staleMs ago; or finished but still `attest_pending` / left `running` (a finalize died before its status write),
  * last tried more than staleMs ago.

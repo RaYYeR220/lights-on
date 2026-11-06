@@ -31,10 +31,10 @@ export interface NightView {
   night: number | null;
   /** The newest observed night anywhere; null before the first live shift. */
   latestObserved: number | null;
-  shift: { attestTx: string | null; startedAt: string; finishedAt: string | null; planned: number; done: number; status: string } | null;
+  shift: { attestTxs: string[]; startedAt: string; finishedAt: string | null; planned: number; done: number; status: string } | null;
   rows: ShiftRowView[];
   counts: Record<Status, number>;
-  /** Distinct attestation transactions of the shift (the multiAttest batches). */
+  /** Distinct attestation transactions of the shift (the multiAttest batches), one hash each, in send order. */
   txs: string[];
   /** Neighbouring observed nights, for navigation. */
   prev: number | null;
@@ -82,6 +82,23 @@ async function rowsFor(db: Db, date: string, observed: boolean): Promise<Raw[]> 
 }
 
 const iso = (v: Date | string | null) => (v ? new Date(v).toISOString() : null);
+const TX = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * One entry per tx hash: the shift's recorded txs (send order) first, then any only seen on rows. Each value is split
+ * on commas (rows written before migration 0011 joined several hashes into one string) and kept only if it is a hash,
+ * so a link can never point at a joined or malformed value.
+ */
+export function shiftTxs(shiftTxList: string[] | null, rowTxs: (string | null)[]): string[] {
+  const out = new Set<string>();
+  for (const v of [...(shiftTxList ?? []), ...rowTxs]) {
+    for (const t of (v ?? '').split(',')) {
+      const h = t.trim();
+      if (TX.test(h)) out.add(h.toLowerCase());
+    }
+  }
+  return [...out];
+}
 
 function view(raw: Raw[]): Pick<NightView, 'rows' | 'counts'> {
   const rows = raw
@@ -144,11 +161,11 @@ async function buildNightView(db: Db, night?: number): Promise<Omit<NightView, '
     const nav = { prev: around[0]?.prev ? nightOf(around[0].prev) : null, next: around[0]?.next ? nightOf(around[0].next) : null };
     if (raw.length) {
       const v = view(raw);
-      const txs = [...new Set([s?.attestTx, ...v.rows.map((r) => r.attestTx)].filter((t): t is string => !!t))];
+      const txs = shiftTxs(s?.attestTxs ?? null, v.rows.map((r) => r.attestTx));
       return {
         mode: 'observed', night: target, latestObserved, rows: v.rows, counts: v.counts, txs, ...nav,
         shift: s
-          ? { attestTx: s.attestTx, startedAt: s.startedAt.toISOString(), finishedAt: s.finishedAt?.toISOString() ?? null, planned: s.planned, done: s.done, status: s.status }
+          ? { attestTxs: shiftTxs(s.attestTxs ?? null, []), startedAt: s.startedAt.toISOString(), finishedAt: s.finishedAt?.toISOString() ?? null, planned: s.planned, done: s.done, status: s.status }
           : null,
       };
     }

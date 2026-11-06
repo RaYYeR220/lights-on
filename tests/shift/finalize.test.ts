@@ -9,6 +9,7 @@ import {
 } from '@/lib/db/queries';
 import { dispatchShift } from '@/lib/shift/dispatch';
 import { finalizeShift, maybeFinalizeStale } from '@/lib/shift/finalize';
+import { getNightView } from '@/lib/views/night';
 import { runProject, runShiftProject, liveWindow } from '@/lib/shift/run';
 import { attestMany as realAttestMany, type AttestDeps, type NightAttestation } from '@/lib/attest/eas';
 import type { ShiftDeps } from '@/lib/shift/deps';
@@ -125,9 +126,24 @@ describe('finalizeShift', () => {
     const uids = (await Promise.all(projects.map((p) => getNights(db, p.id)))).map((x) => x[0].attestationUid);
     expect(new Set(uids).size).toBe(3);
     expect((await getNights(db, projects[0].id))[0].attestTx).toBe(TX);
-    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attested', attestTx: TX });
+    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attested', attestTxs: [TX] });
     expect(onFinalized).toHaveBeenCalledTimes(1);
     expect(onFinalized).toHaveBeenCalledWith(shift.id);
+  });
+
+  it('more than one batch: every multiAttest tx is kept on the shift as its own entry (and shown on /night)', async () => {
+    const { shift, projects } = await shiftWithNights(45); // 20 + 20 + 5
+    const txOf = (i: number) => `0x${(i + 1).toString(16).padStart(64, '7')}` as Hex;
+    let call = 0;
+    let n = 0;
+    const attestMany = vi.fn(async (ns: NightAttestation[]) => ({ uids: ns.map(() => uidOf(++n)), txHash: txOf(call++) }));
+    const { deps } = makeDeps(db, { attestMany: attestMany as unknown as ShiftDeps['attestMany'] });
+    expect(await finalizeShift(shift.id, deps)).toMatchObject({ attested: 45, txHash: txOf(2) });
+    expect(attestMany).toHaveBeenCalledTimes(3);
+    const s = await getShift(db, shift.id);
+    expect(s?.attestTxs).toEqual([txOf(0), txOf(1), txOf(2)]);
+    expect((await getNights(db, projects[44].id))[0].attestTx).toBe(txOf(2));
+    expect((await getNightView(db)).txs).toEqual([txOf(0), txOf(1), txOf(2)]);
   });
 
   it('concurrent finalizes attest each row exactly once', async () => {

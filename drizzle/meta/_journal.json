@@ -78,6 +78,13 @@
       "when": 1793954889072,
       "tag": "0010_claim_nonce_address",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793960525149,
+      "tag": "0011_shift_attest_txs",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { keccak256, toBytes, type Address, type Hex } from 'viem';
 import {
-  DuplicateNight, claimShiftFinalization, claimShiftNights, countUnattested, getNightsForProjects, getProjectsByIds,
+  DuplicateNight, appendShiftTxs, claimShiftFinalization, claimShiftNights, countUnattested, getNightsForProjects, getProjectsByIds,
   getShift, insertNight, leaseShift, listProjects, listStaleShifts, listUnconfirmedBroadcasts, markNightsBroadcast,
   releaseNightClaims, saveEvidence, setNightAttestations, updateShift,
 } from '@/lib/db/queries';
@@ -278,13 +278,13 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
 
   let first = false;
   try {
+    if (txs.length) await appendShiftTxs(db, shiftId, txs); // single statement: never loses a concurrent pass's txs
     const pending = await countUnattested(db, shiftId);
     first = await claimShiftFinalization(db, shiftId, deps.now());
     await updateShift(db, shiftId, {
       status: pending === 0 ? 'attested' : 'attest_pending',
       notes: pending === 0 ? null : note ?? shift.notes,
       finishedAt: deps.now(),
-      ...(txs.length ? { attestTx: [shift.attestTx, ...txs].filter(Boolean).join(',') } : {}),
     });
   } catch (e) {
     console.error('shift.finalize status failed:', safeErrorCode(e));
