@@ -1,7 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { explainNight, sanitizeSummary } from '@/lib/shift/explain';
 import { decideStatus } from '@/lib/shift/rules';
+import { CLASSIFY_JSON_SCHEMA } from '@/lib/ai/prompts';
 import type { EvidenceBundle, CommitFact } from '@/lib/types';
+
+describe('CLASSIFY_JSON_SCHEMA', () => {
+  it('carries no keywords Venice strict json_schema rejects with HTTP 400', () => {
+    expect(JSON.stringify(CLASSIFY_JSON_SCHEMA)).not.toMatch(/"(maxItems|minItems)"/);
+  });
+});
 
 const commit = (o: Partial<CommitFact> = {}): CommitFact => ({
   sha: 'abc1234', author: 'a', authorIsBot: false, date: '2026-11-05T10:00:00Z', message: 'add feature', files: ['src/a.ts'],

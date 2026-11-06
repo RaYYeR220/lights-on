@@ -13,6 +13,10 @@ export const EXPLAIN_SYSTEM = `You write a 1 to 2 sentence plain-language note f
 The status was already decided by fixed rules and is given to you; you only explain it and must never contradict it or suggest it could be different.
 Be neutral and factual. No speculation about intent, no predictions, no advice, no adjectives about the team, no markdown, no links. Never use these words: scam, rug, dead, abandoned, fraud. If the evidence is thin, say so plainly. Reply with the note only, at most 280 characters.`;
 
+/**
+ * Sent as a strict json_schema. Venice answers HTTP 400 to array-size keywords (maxItems/minItems) here, so the
+ * 60-item cap lives in ClassifySchema (zod) and in buildInput's commit-line cap instead.
+ */
 export const CLASSIFY_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -20,7 +24,6 @@ export const CLASSIFY_JSON_SCHEMA = {
   properties: {
     items: {
       type: 'array',
-      maxItems: 60,
       items: {
         type: 'object',
         additionalProperties: false,
