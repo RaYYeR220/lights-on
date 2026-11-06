@@ -429,3 +429,21 @@ export async function recentLiveRuns(
 export async function deleteLiveRun(db: Db, id: number): Promise<void> {
   await db.delete(liveRuns).where(eq(liveRuns.id, id));
 }
+
+/**
+ * Backfill-only write: insert or replace a RECONSTRUCTED night (observed=false). Refuses observed rows, and
+ * the conflict target includes `observed`, so an observed row can never be touched. Never carries attestation fields.
+ */
+export async function upsertReconstructedNight(db: Db, row: NewNight): Promise<NightRow> {
+  if (row.observed !== false) throw new Error('upsertReconstructedNight only writes observed=false rows');
+  const [saved] = await db
+    .insert(nights)
+    .values(row)
+    .onConflictDoUpdate({
+      target: [nights.projectId, nights.night, nights.observed],
+      set: { status: row.status, signals: row.signals ?? null, evidenceHash: row.evidenceHash ?? null },
+    })
+    .returning();
+  if (!saved) throw new Error('upsertReconstructedNight failed');
+  return saved;
+}

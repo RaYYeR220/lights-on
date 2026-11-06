@@ -4,7 +4,7 @@ import type { Db } from '@/lib/db';
 import {
   upsertProject, listProjects, getProjectBySlug, insertNight, getNights, getLatestNightly,
   DuplicateNight, bumpBudget, saveEvidence, getEvidence, insertLiveRun, updateLiveRun,
-  saveSnapshot, getLastSnapshot,
+  saveSnapshot, getLastSnapshot, upsertReconstructedNight,
 } from '@/lib/db/queries';
 import type { EvidenceBundle } from '@/lib/types';
 
@@ -81,5 +81,16 @@ describe('getDb', () => {
     const { getDb } = await import('@/lib/db');
     const [a, b] = await Promise.all([getDb('pglite://memory'), getDb('pglite://memory')]);
     expect(a).toBe(b);
+  });
+
+  it('upsertReconstructedNight updates observed=false rows only and never touches observed rows', async () => {
+    const p = await upsertProject(db, proj('r'));
+    await insertNight(db, nightRow(p.id, '2026-11-05', { status: 'building' }));
+    await upsertReconstructedNight(db, nightRow(p.id, '2026-11-05', { observed: false, status: 'quiet' }));
+    await upsertReconstructedNight(db, nightRow(p.id, '2026-11-05', { observed: false, status: 'shipped', evidenceHash: '0xa' }));
+    const rows = await getNights(db, p.id);
+    expect(rows.map((r) => [r.observed, r.status])).toEqual([[false, 'shipped'], [true, 'building']]);
+    expect(rows[0].evidenceHash).toBe('0xa');
+    await expect(upsertReconstructedNight(db, nightRow(p.id, '2026-11-05', { observed: true }))).rejects.toThrow();
   });
 });

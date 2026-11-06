@@ -40,3 +40,8 @@ export function nightlyWindow(shiftStart: Date): TimeWindow {
 export function shiftStartOfNight(date: string): Date {
   return new Date(`${date.slice(0, 10)}T${String(SHIFT_HOUR_UTC).padStart(2, '0')}:00:00.000Z`);
 }
+
+/** Night (yyyymmdd) whose window [shiftStart - 24h, shiftStart) contains `d`: 04:59 UTC and the previous day 05:00 share a night. */
+export function nightContaining(d: Date): number {
+  return nightNumber(new Date(shiftStartFor(d).getTime() + DAY_MS));
+}
