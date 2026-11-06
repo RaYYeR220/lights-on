@@ -447,3 +447,20 @@ export async function upsertReconstructedNight(db: Db, row: NewNight): Promise<N
   if (!saved) throw new Error('upsertReconstructedNight failed');
   return saved;
 }
+
+/**
+ * Backfill cleanup: remove RECONSTRUCTED git-only nights of one project before its first commit.
+ * Single guarded DELETE: this project, observed=false, night before `beforeDate`, evidence from git alone.
+ */
+export async function deleteReconstructedGitNightsBefore(db: Db, projectId: number, beforeDate: string): Promise<number> {
+  const rows = await db
+    .delete(nights)
+    .where(and(
+      eq(nights.projectId, projectId),
+      eq(nights.observed, false),
+      lt(nights.night, beforeDate),
+      sql`${nights.signals}->>'source' = 'git'`,
+    ))
+    .returning({ id: nights.id });
+  return rows.length;
+}

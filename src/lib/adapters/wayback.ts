@@ -1,4 +1,4 @@
-import { nightContaining } from '@/lib/shift/night';
+import { nightContaining, nightNumber } from '@/lib/shift/night';
 
 export interface Capture { timestamp: string; original: string; digest: string }
 export interface FingerprintedCapture { timestamp: string; deployFingerprint: string | null }
@@ -47,16 +47,40 @@ export function parseWaybackTimestamp(ts: string): Date {
   return new Date(`${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}T${ts.slice(8, 10)}:${ts.slice(10, 12)}:${ts.slice(12, 14)}Z`);
 }
 
-/** Nights in which the deploy fingerprint differs from the previous hashed capture (captures sorted by time). */
-export function deployNights(caps: FingerprintedCapture[]): { night: number; timestamp: string; fingerprint: string }[] {
-  const out: { night: number; timestamp: string; fingerprint: string }[] = [];
-  let prev: string | null = null;
-  for (const c of caps) {
-    if (!c.deployFingerprint) continue;
-    if (prev !== null && c.deployFingerprint !== prev) {
-      out.push({ night: nightContaining(parseWaybackTimestamp(c.timestamp)), timestamp: c.timestamp, fingerprint: c.deployFingerprint });
+/** yyyymmdd + k calendar days. */
+export function nightPlus(n: number, k: number): number {
+  const y = Math.floor(n / 10000), m = Math.floor((n % 10000) / 100), d = n % 100;
+  return nightNumber(new Date(Date.UTC(y, m - 1, d + k)));
+}
+
+/** One fetched (or failed) capture; `idx` is its position in the full CDX list (sampling can skip captures in between). */
+export interface CaptureEntry { timestamp: string; idx: number; fingerprint: string | null; failed?: boolean }
+export interface NightClaim { night: number; kind: 'deploy' | 'quiet'; note: string; fingerprint: string; timestamp: string }
+
+/**
+ * Honest per-night claims from consecutive successful captures A < C (entries sorted by time):
+ *  - differing fingerprints -> `deploy` on night(C); nights strictly between are unknown (no claim);
+ *  - equal fingerprints AND no unfetched capture between them (idx adjacent) -> `quiet` on (night(A), night(C)];
+ *  - a failed or hashless capture breaks the pair; nothing before the first / after the last capture.
+ * Only nights in `window` are returned; a deploy claim beats a quiet claim for the same night.
+ */
+export function coverage(entries: CaptureEntry[], window: Set<number>): NightClaim[] {
+  const out = new Map<number, NightClaim>();
+  for (let i = 0; i + 1 < entries.length; i++) {
+    const a = entries[i], c = entries[i + 1];
+    if (a.failed || c.failed || !a.fingerprint || !c.fingerprint) continue;
+    const nA = nightContaining(parseWaybackTimestamp(a.timestamp));
+    const nC = nightContaining(parseWaybackTimestamp(c.timestamp));
+    if (a.fingerprint !== c.fingerprint) {
+      if (window.has(nC)) {
+        out.set(nC, { night: nC, kind: 'deploy', note: `deploy between ${a.timestamp} and ${c.timestamp}`, fingerprint: c.fingerprint, timestamp: c.timestamp });
+      }
+    } else if (c.idx === a.idx + 1) {
+      for (let n = nightPlus(nA, 1); n <= nC; n = nightPlus(n, 1)) {
+        if (!window.has(n) || out.get(n)?.kind === 'deploy') continue;
+        out.set(n, { night: n, kind: 'quiet', note: `inferred: same deploy fingerprint at ${a.timestamp} and ${c.timestamp}`, fingerprint: c.fingerprint, timestamp: c.timestamp });
+      }
     }
-    prev = c.deployFingerprint;
   }
-  return out;
+  return [...out.values()].sort((x, y) => x.night - y.night);
 }

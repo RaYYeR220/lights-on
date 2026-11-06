@@ -2,12 +2,11 @@ import { loadEnv, arg, daysArg, sleep, writeSummary } from './_backfill';
 import { safeFetch } from '@/lib/net/safeFetch';
 import { extractFingerprint } from '@/lib/adapters/liveapp';
 import {
-  cdxUrl, parseCdx, sampleCaptures, captureUrl, deployNights, WAYBACK_UA, MAX_CAPTURES, type FingerprintedCapture,
+  cdxUrl, parseCdx, sampleCaptures, captureUrl, coverage, WAYBACK_UA, MAX_CAPTURES, type CaptureEntry,
 } from '@/lib/adapters/wayback';
-import { hashEvidence, RULES_VERSION } from '@/lib/shift/evidence';
-import { decideStatus } from '@/lib/shift/rules';
-import { nightDate, nightlyWindow, shiftStartFor, shiftStartOfNight } from '@/lib/shift/night';
-import type { EvidenceBundle, LiveAppFacts } from '@/lib/types';
+import { writeReconstructed } from '@/lib/backfill/store';
+import { nightNumber, shiftStartFor } from '@/lib/shift/night';
+import type { LiveAppFacts } from '@/lib/types';
 
 loadEnv();
 
@@ -17,8 +16,9 @@ const headers = { 'user-agent': WAYBACK_UA };
 
 /** Wayback resets connections when it is busy: retry with backoff, then give up on this request only. */
 async function wbFetch(url: string, timeoutMs: number) {
+  const tries = 4;
   let last: unknown;
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < tries; i++) {
     try {
       const res = await safeFetch(url, { headers, timeoutMs });
       if (res.status !== 429 && res.status < 500) return res;
@@ -26,16 +26,20 @@ async function wbFetch(url: string, timeoutMs: number) {
     } catch (e) {
       last = e;
     }
-    await sleep(5_000 * (i + 1));
+    if (i < tries - 1) await sleep(5_000 * (i + 1));
   }
   throw last;
 }
+
+interface Detail { bytes: number; title: string | null; textHash: string | null; original: string }
 
 async function main() {
   const days = daysArg();
   const only = arg('only');
   const shiftStart = shiftStartFor(new Date());
   const since = new Date(shiftStart.getTime() - days * DAY);
+  const windowNights = new Set<number>();
+  for (let k = 1; k <= days; k++) windowNights.add(nightNumber(new Date(shiftStart.getTime() - (k - 1) * DAY)));
 
   const [{ getDb }, q] = await Promise.all([import('@/lib/db'), import('@/lib/db/queries')]);
   const db = await getDb();
@@ -48,58 +52,55 @@ async function main() {
     try {
       const cdx = await wbFetch(cdxUrl(p.liveUrl!, since), 40_000);
       if (cdx.status !== 200) throw new Error(`cdx http ${cdx.status}`);
-      const all = parseCdx(cdx.body);
+      const all = parseCdx(cdx.body).map((c, idx) => ({ ...c, idx }));
       const picked = sampleCaptures(all, MAX_CAPTURES);
-      const fps: FingerprintedCapture[] = [];
-      const bodies = new Map<string, { bytes: number; title: string | null; textHash: string | null; original: string }>();
+      const entries: CaptureEntry[] = [];
+      const details = new Map<string, Detail>();
       for (const c of picked) {
         await sleep(GAP_MS);
         try {
           const res = await wbFetch(captureUrl(c), 30_000);
-          if (res.status !== 200) continue;
+          if (res.status !== 200) throw new Error(`http ${res.status}`);
           const f = extractFingerprint(res.body, c.original);
-          fps.push({ timestamp: c.timestamp, deployFingerprint: f.deployFingerprint });
-          bodies.set(c.timestamp, { bytes: Buffer.byteLength(res.body), title: f.title, textHash: f.textHash, original: c.original });
-        } catch { /* skip this capture */ }
+          entries.push({ timestamp: c.timestamp, idx: c.idx, fingerprint: f.deployFingerprint });
+          details.set(c.timestamp, { bytes: Buffer.byteLength(res.body), title: f.title, textHash: f.textHash, original: c.original });
+        } catch {
+          entries.push({ timestamp: c.timestamp, idx: c.idx, fingerprint: null, failed: true });
+        }
+      }
+      const capturesFailed = entries.filter((e) => e.failed).length;
+      const capturesFetched = entries.length - capturesFailed;
+      Object.assign(row, { cdxRows: all.length, capturesFetched, capturesFailed });
+      if (entries.length > 0 && capturesFetched === 0) {
+        Object.assign(row, { ok: false, status: 'failed', error: 'all captures failed; nothing written' });
+        console.log(`${p.slug.padEnd(26)} FAILED all ${capturesFailed} captures failed`);
+        summary.push(row);
+        await sleep(GAP_MS);
+        continue;
       }
 
-      const deploys = deployNights(fps).filter((d) => {
-        const t = Date.parse(nightDate(d.night));
-        return t + 5 * 3_600_000 <= shiftStart.getTime() && t + 5 * 3_600_000 > since.getTime();
-      });
-      const existing = await q.getNights(db, p.id, { from: since.toISOString().slice(0, 10) });
-      let merged = 0;
-      let created = 0;
-      for (const d of deploys) {
-        const date = nightDate(d.night);
-        const cap = bodies.get(d.timestamp)!;
+      const claims = coverage(entries, windowNights);
+      const prevRows = await q.getNights(db, p.id, { from: since.toISOString().slice(0, 10) });
+      const prevByDate = new Map(prevRows.filter((n) => !n.observed).map((n) => [n.night, n]));
+      const written = { inserted: 0, updated: 0, unchanged: 0 };
+      for (const c of claims) {
+        const d = details.get(c.timestamp)!;
         const live: LiveAppFacts = {
-          url: p.liveUrl!, finalUrl: cap.original, httpStatus: 200, up: true, latencyMs: null,
-          deployFingerprint: d.fingerprint, textHash: cap.textHash, title: cap.title, bytes: cap.bytes, newDeploy: true, textDelta: null,
+          url: p.liveUrl!, finalUrl: d.original, httpStatus: 200, up: true, latencyMs: null,
+          deployFingerprint: c.fingerprint, textHash: d.textHash, title: d.title, bytes: d.bytes, newDeploy: c.kind === 'deploy', textDelta: null,
         };
-        const prevRow = existing.find((n) => n.night === date && n.observed === false);
-        const prevBundle = prevRow?.evidenceHash ? await q.getEvidence(db, prevRow.evidenceHash) : null;
-        const bundle: EvidenceBundle = prevBundle ?? {
-          v: 1, rulesVersion: RULES_VERSION, project: p.slug, night: d.night, kind: 'nightly',
-          window: nightlyWindow(shiftStartOfNight(date)),
-          sources: { repo: null, liveapp: null, chain: null, vibestarter: null },
-        };
-        bundle.sources.liveapp = { source: 'liveapp', tier: 'verified', ok: true, facts: live };
-        const decision = decideStatus(bundle);
-        const hash = hashEvidence(bundle);
-        await q.saveEvidence(db, hash, p.id, date, bundle);
-        await q.upsertReconstructedNight(db, {
-          projectId: p.id, night: date, shiftId: null, status: decision.status, observed: false,
-          signals: { reconstructed: true, source: prevBundle ? 'git+wayback' : 'wayback', reasons: decision.reasons, capture: d.timestamp },
-          evidenceHash: hash, aiOk: false, summary: null,
-        });
-        if (prevRow) merged++;
-        else created++;
+        const date = `${String(c.night).slice(0, 4)}-${String(c.night).slice(4, 6)}-${String(c.night).slice(6, 8)}`;
+        const r = await writeReconstructed(db, p, c.night, (b) => {
+          b.sources.liveapp = { source: 'liveapp', tier: 'verified', ok: true, facts: live };
+        }, { replaces: 'liveapp', prevRow: prevByDate.get(date) ?? null, extraSignals: { note: c.note, capture: c.timestamp } });
+        written[r.outcome]++;
       }
-      Object.assign(row, { ok: true, cdxRows: all.length, capturesFetched: fps.length, deployNights: deploys.map((d) => d.night), merged, created });
-      console.log(`${p.slug.padEnd(26)} cdx=${String(all.length).padStart(3)} fetched=${String(fps.length).padStart(2)} deploys=${deploys.length} merged=${merged} created=${created}`);
+      const deploys = claims.filter((c) => c.kind === 'deploy').map((c) => c.night);
+      const quiet = claims.length - deploys.length;
+      Object.assign(row, { ok: true, status: capturesFailed > 0 ? 'partial' : 'ok', deployNights: deploys, quietNights: quiet, ...written });
+      console.log(`${p.slug.padEnd(26)} cdx=${String(all.length).padStart(3)} fetched=${String(capturesFetched).padStart(2)} failed=${capturesFailed} deploys=${deploys.length} quiet=${quiet} new=${written.inserted} upd=${written.updated} same=${written.unchanged}${capturesFailed > 0 ? ' PARTIAL' : ''}`);
     } catch (e) {
-      Object.assign(row, { ok: false, error: (e as Error).message });
+      Object.assign(row, { ok: false, status: 'failed', error: (e as Error).message });
       console.log(`${p.slug.padEnd(26)} FAILED ${(e as Error).message}`);
     }
     summary.push(row);

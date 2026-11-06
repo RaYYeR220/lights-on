@@ -131,3 +131,16 @@ export function buildSeedProjects(seed: SeedFile, campaigns: CampaignListing[]):
   }
   return { drafts, skippedRaises };
 }
+
+/**
+ * Upsert patch that never blanks existing data: null / undefined / empty-array fields are dropped, so a re-seed can
+ * only add or change values (an insert leaves the dropped columns at their NULL default).
+ */
+export function mergeDraft(d: NewProject): NewProject {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (v === null || v === undefined || (Array.isArray(v) && v.length === 0)) continue;
+    out[k] = v;
+  }
+  return out as NewProject;
+}

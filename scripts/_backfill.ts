@@ -29,6 +29,13 @@ export function writeSummary(key: 'git' | 'wayback', value: unknown): string {
   const file = path.join(dir, `backfill-${new Date().toISOString().slice(0, 10)}.json`);
   let cur: Record<string, unknown> = {};
   try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* new file */ }
+  const prev = (cur[key] as { projects?: { project: string }[] } | undefined)?.projects;
+  const next = value as { projects?: { project: string }[] };
+  // --only runs refresh just their projects instead of replacing the whole summary
+  if (prev && next.projects) {
+    const fresh = new Set(next.projects.map((r) => r.project));
+    value = { ...next, projects: [...prev.filter((r) => !fresh.has(r.project)), ...next.projects] };
+  }
   cur[key] = value;
   fs.writeFileSync(file, JSON.stringify(cur, null, 2));
   return file;

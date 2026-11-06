@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadEnv, flag, ROOT } from './_backfill';
 import { listVibestarterCampaigns } from '@/lib/adapters/vibestarter';
-import { buildSeedProjects, type SeedFile } from '@/lib/backfill/seed';
+import { buildSeedProjects, mergeDraft, type SeedFile } from '@/lib/backfill/seed';
 
 loadEnv();
 
@@ -20,7 +20,7 @@ async function main() {
   const db = await getDb();
   const counts: Record<string, number> = {};
   for (const d of drafts) {
-    const row = await upsertProject(db, d);
+    const row = await upsertProject(db, mergeDraft(d));
     counts[row.source] = (counts[row.source] ?? 0) + 1;
     console.log(`#${row.id}\t${row.slug}\t${row.source}\t${row.repo ?? '-'}`);
   }

@@ -80,13 +80,17 @@ export function buildRepoNights(p: {
   releases: ReleaseFact[];
   shiftStart: Date; // today's 05:00 UTC
   days: number;
+  /** Author date of the root commit: nights before the repo existed get no row at all. */
+  firstCommitDate?: string;
 }): BackfillNight[] {
+  const firstNight = p.firstCommitDate ? nightContaining(new Date(p.firstCommitDate)) : 0;
   const commits = bucketByNight(p.commits);
   const releases = bucketByNight(p.releases);
   const res: BackfillNight[] = [];
   for (let k = 1; k <= p.days; k++) {
     const start = new Date(p.shiftStart.getTime() - (k - 1) * 86_400_000);
     const night = nightNumber(start);
+    if (night < firstNight) continue;
     const bundle: EvidenceBundle = {
       v: 1,
       rulesVersion: RULES_VERSION,

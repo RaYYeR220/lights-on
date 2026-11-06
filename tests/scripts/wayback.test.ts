@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cdxUrl, parseCdx, sampleCaptures, deployNights } from '@/lib/adapters/wayback';
+import { cdxUrl, parseCdx, sampleCaptures, coverage, nightPlus, type CaptureEntry } from '@/lib/adapters/wayback';
 
 describe('wayback helpers', () => {
   it('builds the CDX url', () => {
@@ -20,14 +20,36 @@ describe('wayback helpers', () => {
     expect(s).toHaveLength(15);
     expect([s[0], s[14]]).toEqual([0, 39]);
   });
-  it('marks the night of the later capture when the fingerprint changes', () => {
-    const r = deployNights([
-      { timestamp: '20261001100000', deployFingerprint: 'a' },
-      { timestamp: '20261002040000', deployFingerprint: null },
-      { timestamp: '20261003043000', deployFingerprint: 'b' }, // 04:30 -> night of Oct 3
-      { timestamp: '20261004060000', deployFingerprint: 'b' },
-      { timestamp: '20261005060000', deployFingerprint: 'c' }, // 06:00 -> night of Oct 6
-    ]);
-    expect(r.map((x) => x.night)).toEqual([20261003, 20261006]);
+  const W = new Set([20261001, 20261002, 20261003, 20261004, 20261005, 20261006, 20261007]);
+  const e = (timestamp: string, idx: number, fingerprint: string | null, failed = false): CaptureEntry => ({ timestamp, idx, fingerprint, failed });
+
+  it('nightPlus crosses month ends', () => {
+    expect(nightPlus(20261031, 1)).toBe(20261101);
+  });
+  it('equal pair: nights in (night(A), night(C)] are quiet, with a note', () => {
+    const r = coverage([e('20261001040000', 0, 'a'), e('20261004040000', 1, 'a')], W);
+    expect(r.map((c) => [c.night, c.kind])).toEqual([[20261002, 'quiet'], [20261003, 'quiet'], [20261004, 'quiet']].map(([n, k]) => [n, k]));
+    expect(r[0].note).toBe('inferred: same deploy fingerprint at 20261001040000 and 20261004040000');
+  });
+  it('equal pair is NOT claimed when an unfetched capture sits between them', () => {
+    expect(coverage([e('20261001040000', 0, 'a'), e('20261004040000', 3, 'a')], W)).toEqual([]);
+  });
+  it('differing pair: deploy on night(C) only, nights strictly between stay unknown', () => {
+    const r = coverage([e('20261001040000', 0, 'a'), e('20261004043000', 5, 'b')], W);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ night: 20261004, kind: 'deploy', note: 'deploy between 20261001040000 and 20261004043000' });
+  });
+  it('no claims before the first or after the last capture, or outside the window', () => {
+    const r = coverage([e('20261003040000', 0, 'a'), e('20261004040000', 1, 'a')], W);
+    expect(r.map((c) => c.night)).toEqual([20261004]);
+    expect(coverage([e('20260901040000', 0, 'a'), e('20260902040000', 1, 'a')], W)).toEqual([]);
+  });
+  it('a failed capture breaks the pair: A and C are never compared across a failed B', () => {
+    expect(coverage([e('20261001040000', 0, 'a'), e('20261002040000', 1, null, true), e('20261005040000', 2, 'b')], W)).toEqual([]);
+    expect(coverage([e('20261001040000', 0, 'a'), e('20261002040000', 1, null, true), e('20261005040000', 2, 'a')], W)).toEqual([]);
+  });
+  it('a deploy claim beats a quiet claim for the same night', () => {
+    const r = coverage([e('20261001040000', 0, 'a'), e('20261003040000', 1, 'a'), e('20261003043000', 2, 'b')], W);
+    expect(r.find((c) => c.night === 20261003)?.kind).toBe('deploy');
   });
 });
