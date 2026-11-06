@@ -1,14 +1,24 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPublicClient, createWalletClient, encodePacked, http, keccak256, parseEventLogs, toBytes, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, encodePacked, formatEther, http, keccak256, parseEventLogs, toBytes, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 import { SCHEMA_REGISTRY_ADDRESS, EAS_ADDRESS, IDENTITY_REGISTRY_ADDRESS, easAbi, identityRegistryAbi, schemaRegistryAbi } from '@/lib/attest/abi';
-import { attestOne, decodeNight, encodeNight, schemaUid, SCHEMA, type NightAttestation } from '@/lib/attest/eas';
+import { asc, eq } from 'drizzle-orm';
+import {
+  attestOne, attestRoot, decodeNight, decodeRoot, encodeNight, rootSchemaUid, schemaUid, ROOT_SCHEMA, SCHEMA, type NightAttestation,
+} from '@/lib/attest/eas';
 import { registerAgent } from '@/lib/attest/erc8004';
+import { buildNightManifest } from '@/lib/attest/manifest';
 import { verifyNight } from '@/lib/attest/verify';
-import { hashEvidence } from '@/lib/shift/evidence';
-import type { EvidenceBundle } from '@/lib/types';
+import { createNightlyShift, getNightManifest, insertNight, saveEvidence } from '@/lib/db/queries';
+import { nights } from '@/lib/db/schema';
+import type { ShiftDeps } from '@/lib/shift/deps';
+import { canonicalize, hashEvidence } from '@/lib/shift/evidence';
+import { finalizeShift } from '@/lib/shift/finalize';
+import type { EvidenceBundle, Status } from '@/lib/types';
+import { makeTestDb } from '../helpers/db';
+import { makeDeps, seedProject, NOW } from '../helpers/shift';
 
 const PORT = 8546;
 const RPC = `http://127.0.0.1:${PORT}`;
@@ -21,8 +31,8 @@ const FORK_KEY = generatePrivateKey();
 const hasAnvil = spawnSync('anvil', ['--version']).status === 0;
 if (!hasAnvil) console.warn('SKIPPING fork tests: anvil is not on PATH (install foundry)');
 
-const bundle = (night: number, extra = 0): EvidenceBundle => ({
-  v: 1, rulesVersion: 'r1', project: 'demo', night, kind: 'nightly',
+const bundle = (night: number, extra = 0, project = 'demo'): EvidenceBundle => ({
+  v: 1, rulesVersion: 'r1', project, night, kind: 'nightly',
   window: { start: '2026-11-05T05:00:00.000Z', end: '2026-11-06T05:00:00.000Z' },
   sources: {
     repo: { source: 'repo', tier: 'verified', ok: true, facts: {
@@ -48,10 +58,14 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
   const budget = async (w: bigint) => { spent += w; return true; };
 
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000' as const;
-  /** The previous nightly flow: one multiAttest with one per-project attestation each (kept for the cost comparison). */
+  /**
+   * The previous nightly flow: one multiAttest with one per-project attestation each (kept for the cost comparison).
+   * An explicit gas limit skips eth_estimateGas, whose repeated runs re-fetch every fresh storage slot from upstream
+   * (minutes for 52 attestations); the receipt's gasUsed is the real cost either way.
+   */
   async function perProjectMultiAttest(ns: NightAttestation[]): Promise<{ uids: Hex[]; gasUsed: bigint }> {
     const hash = await wallet.writeContract({
-      address: EAS_ADDRESS, abi: easAbi, functionName: 'multiAttest',
+      address: EAS_ADDRESS, abi: easAbi, functionName: 'multiAttest', gas: 450_000n * BigInt(ns.length) + 300_000n,
       args: [[{ schema: schemaUid(), data: ns.map((n) => ({ recipient: ZERO_ADDR, expirationTime: 0n, revocable: false, refUID: ('0x' + '00'.repeat(32)) as Hex, data: encodeNight(n), value: 0n })) }]],
     });
     const rc = await publicClient.waitForTransactionReceipt({ hash });
@@ -60,7 +74,9 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
   }
 
   beforeAll(async () => {
-    anvil = spawn('anvil', ['--fork-url', FORK_URL, '--port', String(PORT), '--silent'], { stdio: 'ignore' });
+    // --no-rate-limit: every fresh storage slot of a new attestation is fetched from the upstream RPC; anvil's default
+    // compute-unit throttle makes a 52-attestation multiAttest take many minutes.
+    anvil = spawn('anvil', ['--fork-url', FORK_URL, '--port', String(PORT), '--silent', '--no-rate-limit'], { stdio: 'ignore' });
     const deadline = Date.now() + 90_000;
     for (;;) {
       try { if ((await publicClient.getChainId()) === 8453) break; } catch { /* not up yet */ }
@@ -68,11 +84,11 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
       await new Promise((r) => setTimeout(r, 500));
     }
     await publicClient.request({ method: 'anvil_setBalance', params: [account.address, '0x56bc75e2d63100000'] } as never);
-    const existing = await publicClient.readContract({ address: SCHEMA_REGISTRY_ADDRESS, abi: schemaRegistryAbi, functionName: 'getSchema', args: [schemaUid()] });
-    if (existing.uid === '0x' + '00'.repeat(32)) {
+    for (const [schema, uid] of [[SCHEMA, schemaUid()], [ROOT_SCHEMA, rootSchemaUid()]] as const) {
+      const existing = await publicClient.readContract({ address: SCHEMA_REGISTRY_ADDRESS, abi: schemaRegistryAbi, functionName: 'getSchema', args: [uid] });
+      if (existing.uid !== '0x' + '00'.repeat(32)) continue;
       const hash = await wallet.writeContract({
-        address: SCHEMA_REGISTRY_ADDRESS, abi: schemaRegistryAbi, functionName: 'register',
-        args: [SCHEMA, '0x0000000000000000000000000000000000000000', false],
+        address: SCHEMA_REGISTRY_ADDRESS, abi: schemaRegistryAbi, functionName: 'register', args: [schema, ZERO_ADDR, false],
       });
       const rc = await publicClient.waitForTransactionReceipt({ hash });
       expect(rc.status).toBe('success');
@@ -81,11 +97,72 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
 
   afterAll(() => { anvil?.kill(); });
 
-  it('schemaUid matches SchemaRegistry.getSchema', async () => {
-    const s = await publicClient.readContract({ address: SCHEMA_REGISTRY_ADDRESS, abi: schemaRegistryAbi, functionName: 'getSchema', args: [schemaUid()] });
-    expect(s.uid).toBe(schemaUid());
-    expect(s.schema).toBe(SCHEMA);
-    expect(s.revocable).toBe(false);
+  it('schemaUid and rootSchemaUid match SchemaRegistry.getSchema', async () => {
+    for (const [schema, uid] of [[SCHEMA, schemaUid()], [ROOT_SCHEMA, rootSchemaUid()]] as const) {
+      const s = await publicClient.readContract({ address: SCHEMA_REGISTRY_ADDRESS, abi: schemaRegistryAbi, functionName: 'getSchema', args: [uid] });
+      expect(s.uid).toBe(uid);
+      expect(s.schema).toBe(schema);
+      expect(s.revocable).toBe(false);
+      expect(s.resolver).toBe(ZERO_ADDR);
+    }
+  });
+
+  it('finalizeShift attests a 3-leaf root on the fork: one tx, one uid; every row verifies in root mode; tampering does not', async () => {
+    const db = await makeTestDb();
+    const { shift } = await createNightlyShift(db, { night: '2026-11-06', startedAt: NOW, planned: 3 });
+    const statuses: Status[] = ['shipped', 'quiet', 'building'];
+    const bundles: EvidenceBundle[] = [];
+    for (const [i, slug] of ['alpha', 'beta', 'gamma'].entries()) {
+      const p = await seedProject(db, slug);
+      const b = bundle(20261106, i, slug);
+      await saveEvidence(db, hashEvidence(b), p.id, '2026-11-06', b);
+      await insertNight(db, { projectId: p.id, night: '2026-11-06', status: statuses[i], observed: true, shiftId: shift.id, evidenceHash: hashEvidence(b) });
+      bundles.push(b);
+    }
+    const before = await publicClient.getTransactionCount({ address: account.address });
+    const { deps } = makeDeps(db, {
+      attestRoot, agentId: 7n, siteUrl: 'https://lights-on-watch.vercel.app',
+      signer: { wallet, publicClient } as unknown as ShiftDeps['signer'],
+    });
+    const r = await finalizeShift(shift.id, deps); // the production path: persist (pglite) before the send
+    expect(r).toMatchObject({ attested: 3 });
+    expect(await publicClient.getTransactionCount({ address: account.address })).toBe(before + 1);
+
+    const rows = await db.select().from(nights).where(eq(nights.shiftId, shift.id)).orderBy(asc(nights.id));
+    const uid = rows[0].attestationUid as Hex;
+    expect(rows.every((n) => n.attestationUid === uid && n.attestTx === r.txHash)).toBe(true);
+    const rc = await publicClient.getTransactionReceipt({ hash: r.txHash! });
+    expect(parseEventLogs({ abi: easAbi, eventName: 'Attested', logs: rc.logs })).toHaveLength(1);
+    const a = await publicClient.readContract({ address: EAS_ADDRESS, abi: easAbi, functionName: 'getAttestation', args: [uid] });
+    expect(a.schema).toBe(rootSchemaUid());
+    const onchain = decodeRoot(a.data);
+    expect(onchain).toMatchObject({ root: rows[0].attestRoot, night: 20261106, count: 3, agentId: 7n });
+    expect(onchain.manifestURI).toBe(`https://lights-on-watch.vercel.app/api/v1/manifest/${rows[0].attestManifest}`);
+    const manifest = (await getNightManifest(db, rows[0].attestManifest!))!;
+    expect(keccak256(toBytes(canonicalize(manifest)))).toBe(rows[0].attestManifest);
+    expect(manifest.root).toBe(onchain.root);
+
+    for (const [i, n] of rows.entries()) {
+      const row = { status: n.status, lit30: n.attestLit30!, proof: n.attestProof!, evidenceHash: n.evidenceHash };
+      const v = await verifyNight(uid, bundles[i], publicClient, [account.address], { row });
+      expect(v.mode).toBe('root');
+      expect(v.match).toBe(true);
+      expect(Object.values(v.checks).every(Boolean)).toBe(true);
+      expect(v.attester).toBe(account.address);
+      // tampered: one changed fact in the bundle, or a status the leaf does not commit to
+      const bad = await verifyNight(uid, bundle(20261106, 99, bundles[i].project), publicClient, [account.address], { row });
+      expect(bad.match).toBe(false);
+      expect(bad.checks.hash).toBe(false);
+      const lie = await verifyNight(uid, bundles[i], publicClient, [account.address], { row: { ...row, status: 'down' } });
+      expect(lie.match).toBe(false);
+      expect(lie.checks).toMatchObject({ proof: false });
+      expect((await verifyNight(uid, bundles[i], publicClient, [ZERO_ADDR], { row })).match).toBe(false); // foreign allowlist
+    }
+    // a proof is bound to its own leaf: alpha's row cannot vouch for beta's bundle
+    const a0 = rows[0];
+    expect((await verifyNight(uid, bundles[1], publicClient, [account.address], {
+      row: { status: a0.status, lit30: a0.attestLit30!, proof: a0.attestProof! },
+    })).match).toBe(false);
   });
 
   it('per-project attestations (the live-run schema) verify; tampered bundle does not', async () => {
@@ -148,7 +225,7 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
     expect((await verifyNight(good.uid, b, publicClient, [account.address])).match).toBe(true);
     const otherProject = await verifyNight(good.uid, { ...b, project: 'other' }, publicClient, [account.address]);
     expect(otherProject.match).toBe(false);
-    expect(otherProject.checks.project).toBe(false);
+    expect(otherProject.checks).toMatchObject({ project: false });
     const otherNight = await verifyNight(good.uid, { ...b, night: 20261111 }, publicClient, [account.address]);
     expect(otherNight.match).toBe(false);
     expect(otherNight.checks.night).toBe(false);
@@ -177,6 +254,9 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
   it('no persist hook and no unsafeNoPersist: refused, no tx on the fork', async () => {
     const before = await publicClient.getTransactionCount({ address: account.address });
     expect(await attestOne(nightFor(bundle(20261109), 7n), { wallet, publicClient, budget })).toEqual({ skipped: 'error', error: 'no_persist' });
+    const root = { root: keccak256(toBytes('r')), night: 20261109, count: 3, agentId: 7n, manifestURI: 'https://example.test/m' };
+    expect(await attestRoot(root, { wallet, publicClient, budget })).toEqual({ skipped: 'error', error: 'no_persist' });
+    expect(await attestRoot(root, { wallet, publicClient, budget: async () => false, unsafeNoPersist: true })).toEqual({ skipped: 'gas_cap' });
     expect(await publicClient.getTransactionCount({ address: account.address })).toBe(before);
   });
 
@@ -187,4 +267,41 @@ describe.skipIf(!hasAnvil)('attestation on a Base fork', () => {
     expect(await publicClient.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: identityRegistryAbi, functionName: 'ownerOf', args: [agentId] })).toBe(account.address);
     expect(await publicClient.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: identityRegistryAbi, functionName: 'tokenURI', args: [agentId] })).toBe(uri);
   });
+
+  it('cost: one root over 52 project-nights vs the old per-project attestations of the same 52', async () => {
+    const entries = Array.from({ length: 52 }, (_, i) => ({
+      slug: `project-${i}`, night: 20261106, status: 'building' as const, lit30: i % 31, evidenceHash: keccak256(toBytes(`ev-${i}`)),
+    }));
+    const m = buildNightManifest(entries, 7n);
+    const site = 'https://lights-on-watch.vercel.app';
+    const r = await attestRoot(
+      { root: m.root, night: 20261106, count: 52, agentId: 7n, manifestURI: `${site}/api/v1/manifest/${m.hash}` },
+      { wallet, publicClient, budget, unsafeNoPersist: true },
+    );
+    if ('skipped' in r) throw new Error(`skipped ${r.skipped} ${r.error}`);
+    const rootRc = await publicClient.getTransactionReceipt({ hash: r.txHash });
+    const old = entries.map((e): NightAttestation => ({
+      projectKey: keccak256(toBytes(e.slug)), night: 20261106, kind: 0, status: 2, lit30: e.lit30,
+      evidenceHash: e.evidenceHash, agentId: 7n, evidenceURI: `${site}/api/v1/evidence/${e.evidenceHash}`,
+    }));
+    const one = await perProjectMultiAttest(old); // all 52 in one multiAttest: a lower bound for the old flow (it sent batches of 20)
+    expect(one.uids).toHaveLength(52);
+    const single = await attestOne(old[0], { wallet, publicClient, budget, unsafeNoPersist: true });
+    if ('skipped' in single) throw new Error('single skipped');
+    const singleGas = (await publicClient.getTransactionReceipt({ hash: single.txHash })).gasUsed;
+    const block = await publicClient.getBlock({ blockTag: 'latest' });
+    const gasPrice = rootRc.effectiveGasPrice;
+    console.log('[fork gas]', JSON.stringify({
+      rootAttest52: rootRc.gasUsed.toString(),
+      multiAttest52OneTx: one.gasUsed.toString(),
+      attestOnePerProject: singleGas.toString(),
+      attestOneX52: (singleGas * 52n).toString(),
+      forkBaseFeeWei: (block.baseFeePerGas ?? 0n).toString(),
+      effectiveGasPriceWei: gasPrice.toString(),
+      rootCostEth: formatEther(rootRc.gasUsed * gasPrice),
+      oldCostEth: formatEther(one.gasUsed * gasPrice),
+    }));
+    expect(rootRc.gasUsed * 20n).toBeLessThan(one.gasUsed);
+    expect(spent).toBeGreaterThan(0n); // the send path reserved gas against the budget
+  }, 600_000);
 });
