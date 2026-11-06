@@ -14,7 +14,12 @@ export interface NightAttestation {
   lit30: number; evidenceHash: Hex; agentId: bigint; evidenceURI: string;
 }
 
-export type Skipped = { skipped: 'gas_cap' | 'disabled' | 'error'; error?: string };
+/**
+ * Not attested. `txHash` is set whenever the tx WAS broadcast (receipt wait failed, reverted, or logs unreadable):
+ * its fate must then be settled from the receipt, never by sending the same attestations again.
+ * `error: 'reverted'` with a txHash = confirmed revert (receipt status reverted).
+ */
+export type Skipped = { skipped: 'gas_cap' | 'disabled' | 'error'; error?: string; txHash?: Hex };
 
 export interface AttestDeps {
   wallet: WalletClient<Transport, Chain | undefined, Account> | null;
@@ -27,7 +32,12 @@ export interface AttestDeps {
    * Estimate/fee-read failures happen before anything is reserved, so they need no release.
    */
   release?: (weiAmount: bigint) => Promise<void>;
+  /** Called right after broadcast, before the receipt wait, so the caller can persist the hash. Errors are ignored. */
+  onBroadcast?: (txHash: Hex) => Promise<void>;
 }
+
+/** Receipt wait before giving up (the tx hash is returned, so nothing is lost). */
+export const RECEIPT_TIMEOUT_MS = 60_000;
 
 export const MIN_TIP_WEI = 1_000_000n; // 0.001 gwei
 export const MAX_TIP_WEI = 10_000_000n; // 0.01 gwei
@@ -60,13 +70,14 @@ function requestData(n: NightAttestation) {
 
 type Logs = readonly { address: string; topics: readonly Hex[]; data: Hex }[];
 
-/** Estimate worst-case cost, reserve it against the cap, then send. Never throws. */
+/** Estimate worst-case cost, reserve it against the cap, then send. Never throws; after broadcast always reports txHash. */
 async function send(
   call: { functionName: 'attest' | 'multiAttest'; args: unknown },
   deps: AttestDeps,
 ): Promise<{ txHash: Hex; logs: Logs } | Skipped> {
   const { wallet, publicClient } = deps;
   if (!wallet) return { skipped: 'disabled' };
+  let txHash: Hex | undefined;
   try {
     const base = { address: EAS_ADDRESS, abi: easAbi, account: wallet.account, ...call } as never;
     const estimate = await publicClient.estimateContractGas(base);
@@ -77,18 +88,19 @@ async function send(
     const { maxFeePerGas, maxPriorityFeePerGas } = computeFees(block.baseFeePerGas, tipEstimate);
     const reserved = gas * maxFeePerGas;
     if (!(await deps.budget(reserved))) return { skipped: 'gas_cap' };
-    let txHash: Hex;
     try {
       txHash = await wallet.writeContract({ ...(base as object), chain: wallet.chain, gas, maxFeePerGas, maxPriorityFeePerGas } as never);
     } catch (e) {
       await deps.release?.(reserved).catch(() => undefined); // never broadcast: refund
       return { skipped: 'error', error: safeErrorCode(e) };
     }
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-    if (receipt.status !== 'success') return { skipped: 'error', error: 'reverted' };
-    return { txHash, logs: receipt.logs as unknown as Logs };
+    const sent = txHash;
+    await deps.onBroadcast?.(sent).catch(() => undefined);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: sent, timeout: RECEIPT_TIMEOUT_MS });
+    if (receipt.status !== 'success') return { skipped: 'error', error: 'reverted', txHash: sent };
+    return { txHash: sent, logs: receipt.logs as unknown as Logs };
   } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e) };
+    return { skipped: 'error', error: safeErrorCode(e), ...(txHash ? { txHash } : {}) };
   }
 }
 
@@ -102,10 +114,10 @@ export async function attestOne(n: NightAttestation, deps: AttestDeps): Promise<
   if ('skipped' in r) return r;
   try {
     const [uid] = uidsFrom(r.logs);
-    if (!uid) return { skipped: 'error', error: 'no_attested_log' };
+    if (!uid) return { skipped: 'error', error: 'no_attested_log', txHash: r.txHash };
     return { uid, txHash: r.txHash };
   } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e) };
+    return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash };
   }
 }
 
@@ -115,9 +127,31 @@ export async function attestMany(ns: NightAttestation[], deps: AttestDeps): Prom
   if ('skipped' in r) return r;
   try {
     const uids = uidsFrom(r.logs);
-    if (uids.length !== ns.length) return { skipped: 'error', error: 'uid_count_mismatch' };
+    if (uids.length !== ns.length) return { skipped: 'error', error: 'uid_count_mismatch', txHash: r.txHash };
     return { uids, txHash: r.txHash };
   } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e) };
+    return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash };
+  }
+}
+
+export type AttestReceipt =
+  | { status: 'success'; uids: Hex[] }
+  | { status: 'reverted' }
+  | { status: 'not_found' }
+  | { status: 'error'; error: string };
+
+/**
+ * Settle a broadcast attestation tx from its receipt: the EAS `Attested` uids in log order (= request order for
+ * multiAttest), a confirmed revert, or not found (pending or dropped). Never throws.
+ */
+export async function attestationReceipt(txHash: Hex, publicClient: Pick<AnyPublicClient, 'getTransactionReceipt'>): Promise<AttestReceipt> {
+  try {
+    const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+    if (receipt.status !== 'success') return { status: 'reverted' };
+    return { status: 'success', uids: uidsFrom(receipt.logs as unknown as Logs) };
+  } catch (e) {
+    const named = (x: unknown) => (x as { name?: unknown } | null)?.name === 'TransactionReceiptNotFoundError';
+    if (named(e) || named((e as { cause?: unknown } | null)?.cause)) return { status: 'not_found' };
+    return { status: 'error', error: safeErrorCode(e) };
   }
 }

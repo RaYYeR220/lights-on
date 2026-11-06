@@ -62,6 +62,7 @@ export function makeDeps(db: Db, over: Partial<ShiftDeps> = {}) {
     attestMany: attestMany as unknown as ShiftDeps['attestMany'],
     explain: vi.fn(async () => ({ aiOk: true, summary: 'Code changes landed.', notable: [], aiSubstance: null, model: 'm', tokens: 10 })),
     adapters: stubAdapters(),
+    agentId: 42n,
     ...over,
   };
   return { deps, clock };

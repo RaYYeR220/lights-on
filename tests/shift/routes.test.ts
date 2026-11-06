@@ -5,10 +5,14 @@ import { GET as liveGET } from '@/app/api/shift/live/route';
 import * as liveRoute from '@/app/api/shift/live/route';
 import fs from 'node:fs';
 import path from 'node:path';
+import { migrate } from 'drizzle-orm/pglite/migrator';
+import { getDb } from '@/lib/db';
+import { upsertProject } from '@/lib/db/queries';
+import { liveRuns } from '@/lib/db/schema';
 
 const saved = { ...process.env };
 afterEach(() => {
-  for (const k of ['CRON_SECRET', 'INTERNAL_RUN_TOKEN']) {
+  for (const k of ['CRON_SECRET', 'INTERNAL_RUN_TOKEN', 'DATABASE_URL']) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
@@ -49,6 +53,27 @@ describe('shift routes: auth and input', () => {
     expect(await r2.text()).not.toContain('script');
     expect(liveRoute.runtime).toBe('nodejs');
     expect(liveRoute.maxDuration).toBe(120);
+  });
+
+  it('live: 503 misconfigured when INTERNAL_RUN_TOKEN (the requester-hash salt) is unset', async () => {
+    delete process.env.INTERNAL_RUN_TOKEN;
+    const r = await liveGET(new Request('http://localhost/api/shift/live?project=alpha'));
+    expect(r.status).toBe(503);
+    expect(await body(r)).toEqual({ error: 'misconfigured' });
+  });
+
+  it('live: hidden and unknown projects are 404 (no reservation made)', async () => {
+    const db = await getDb('pglite://memory');
+    await migrate(db as never, { migrationsFolder: path.resolve(__dirname, '../../drizzle') });
+    await upsertProject(db, { slug: 'secret-proj', name: 'S', source: 'community', hidden: true, liveUrl: 'https://s.example' });
+    process.env.DATABASE_URL = 'pglite://memory';
+    process.env.INTERNAL_RUN_TOKEN = 'internal-token-value';
+    for (const slug of ['secret-proj', 'nope']) {
+      const r = await liveGET(new Request(`http://localhost/api/shift/live?project=${slug}`));
+      expect(r.status).toBe(404);
+      expect(await body(r)).toEqual({ error: 'not_found' });
+    }
+    expect(await db.select().from(liveRuns)).toHaveLength(0);
   });
 
   it('vercel.json schedules the dispatch cron at 05:00 UTC', () => {

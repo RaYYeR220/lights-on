@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { keccak256, toBytes, zeroAddress, type Hex } from 'viem';
-import { attestMany, attestOne, computeFees, decodeNight, encodeNight, schemaUid, SCHEMA, type AttestDeps, type NightAttestation } from '@/lib/attest/eas';
+import { encodeAbiParameters, encodeEventTopics, keccak256, toBytes, zeroAddress, type Hex } from 'viem';
+import {
+  attestMany, attestOne, attestationReceipt, computeFees, decodeNight, encodeNight, schemaUid, SCHEMA, type AttestDeps, type NightAttestation,
+} from '@/lib/attest/eas';
+import { EAS_ADDRESS, easAbi } from '@/lib/attest/abi';
 
 const night = (i = 0): NightAttestation => ({
   projectKey: keccak256(toBytes(`proj-${i}`)), night: 20261106, kind: 0, status: 1, lit30: 17,
@@ -107,5 +110,63 @@ describe('explicit fees', () => {
     const c = deps({ budget: async () => false });
     await attestOne(night(), c.d);
     expect(c.release).not.toHaveBeenCalled();
+  });
+});
+
+const SENT = ('0x' + '11'.repeat(32)) as Hex;
+const attestedLog = (uid: Hex, address: string = EAS_ADDRESS) => ({
+  address,
+  topics: encodeEventTopics({ abi: easAbi, eventName: 'Attested', args: { recipient: zeroAddress, attester: zeroAddress, schemaUID: schemaUid() } }),
+  data: encodeAbiParameters([{ type: 'bytes32' }], [uid]),
+});
+const uid = (i: number) => keccak256(toBytes(`uid-${i}`));
+
+describe('after broadcast the tx hash is never lost', () => {
+  it('receipt wait fails -> skipped error WITH txHash; onBroadcast saw it first; no refund', async () => {
+    const { d, publicClient, release } = deps();
+    publicClient.waitForTransactionReceipt.mockRejectedValue(Object.assign(new Error('x'), { name: 'WaitForTransactionReceiptTimeoutError' }));
+    const seen: Hex[] = [];
+    const r = await attestMany([night(1), night(2)], { ...d, onBroadcast: async (h) => { seen.push(h); } });
+    expect(r).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT });
+    expect(seen).toEqual([SENT]);
+    expect(release).not.toHaveBeenCalled();
+    expect(publicClient.waitForTransactionReceipt).toHaveBeenCalledWith({ hash: SENT, timeout: 60_000 });
+  });
+
+  it('reverted receipt -> skipped error reverted WITH txHash', async () => {
+    const { d, publicClient } = deps();
+    publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', logs: [] });
+    expect(await attestOne(night(), d)).toEqual({ skipped: 'error', error: 'reverted', txHash: SENT });
+  });
+
+  it('mined but logs do not match the batch -> skipped error WITH txHash (settled later, never re-sent)', async () => {
+    const { d, publicClient } = deps();
+    publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [attestedLog(uid(1))] });
+    expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'uid_count_mismatch', txHash: SENT });
+  });
+
+  it('a throwing onBroadcast never breaks the send', async () => {
+    const { d, publicClient } = deps();
+    publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [attestedLog(uid(1))] });
+    const r = await attestOne(night(), { ...d, onBroadcast: async () => { throw new Error('db down'); } });
+    expect(r).toEqual({ uid: uid(1), txHash: SENT });
+  });
+});
+
+describe('attestationReceipt', () => {
+  const client = (impl: () => Promise<unknown>) => ({ getTransactionReceipt: vi.fn(impl) }) as never;
+
+  it('mined: uids of the EAS Attested logs in log order, other contracts ignored', async () => {
+    const logs = [attestedLog(uid(1)), attestedLog(uid(9), '0x0000000000000000000000000000000000000bad'), attestedLog(uid(2))];
+    expect(await attestationReceipt(SENT, client(async () => ({ status: 'success', logs }))))
+      .toEqual({ status: 'success', uids: [uid(1), uid(2)] });
+  });
+
+  it('reverted / not found / other errors', async () => {
+    expect(await attestationReceipt(SENT, client(async () => ({ status: 'reverted', logs: [] })))).toEqual({ status: 'reverted' });
+    const nf = Object.assign(new Error('Transaction receipt with hash could not be found'), { name: 'TransactionReceiptNotFoundError' });
+    expect(await attestationReceipt(SENT, client(async () => { throw nf; }))).toEqual({ status: 'not_found' });
+    const other = await attestationReceipt(SENT, client(async () => { throw new Error('boom https://rpc/?key=SECRET'); }));
+    expect(other).toEqual({ status: 'error', error: 'error' });
   });
 });

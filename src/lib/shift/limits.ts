@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
+import ipaddr from 'ipaddr.js';
 import { deleteLiveRun, insertLiveRun, recentLiveRuns } from '@/lib/db/queries';
 import type { Db } from '@/lib/db';
 import type { ShiftDeps } from './deps';
@@ -7,7 +8,11 @@ import type { ShiftDeps } from './deps';
 export const CAPS = {
   llmTokensPerShift: 400_000,
   llmTokensPerDay: 1_500_000,
+  /** Live runs stop this far short of the daily LLM cap (they get 900k); the nightly shift can use all of it. */
+  nightlyReserveTokens: 600_000,
   gasWeiPerDay: 1_000_000_000_000_000n, // 0.001 ETH
+  /** Live runs stop this far short of the daily gas cap (they get 0.0005 ETH). */
+  nightlyReserveWei: 500_000_000_000_000n, // 0.0005 ETH
   liveRunsPerDay: 60,
   githubCallsPerNight: 400,
   /** Live runs: hard per-run cap, plus the daily `github_calls` counter (live calls only) at 30/hour x 24. */
@@ -74,10 +79,26 @@ export async function checkLiveLimit(ipHash: string, projectId: number, deps: Li
   return { ok: true, liveRunId: row.id };
 }
 
-/** Requester key: sha256(daily salt + ip), salt = HMAC(INTERNAL_RUN_TOKEN, day). Raw IPs are never stored. */
+/**
+ * Rate-limit identity of an address: IPv4 as is, IPv6 by its /64 (one subscriber usually owns a whole /64, so
+ * rotating the interface id must not buy fresh limits). IPv4-mapped IPv6 counts as the IPv4.
+ */
+export function ipKey(ip: string): string {
+  const raw = ip.trim().replace(/^\[|\]$/g, '').split('%')[0];
+  try {
+    const a = ipaddr.process(raw);
+    if (a.kind() === 'ipv4') return a.toString();
+    return `${(a as ipaddr.IPv6).toNormalizedString().split(':').slice(0, 4).join(':')}::/64`;
+  } catch {
+    return raw.slice(0, 64);
+  }
+}
+
+/** Requester key: sha256(daily salt + ipKey), salt = HMAC(INTERNAL_RUN_TOKEN, day). Raw IPs are never stored. */
 export function hashIp(ip: string, day: string, secret: string): string {
-  const salt = createHmac('sha256', secret || 'lights-on').update(day).digest('hex');
-  return createHash('sha256').update(salt + ip).digest('hex');
+  if (!secret) throw new Error('hashIp: secret required');
+  const salt = createHmac('sha256', secret).update(day).digest('hex');
+  return createHash('sha256').update(salt + ipKey(ip)).digest('hex');
 }
 
 /** Client address as set by the platform (Vercel overwrites both headers). */

@@ -1,11 +1,14 @@
+import type { Hex } from 'viem';
 import type { Db } from '@/lib/db';
-import { bumpBudget, bumpShiftBudget, releaseBudget, type BudgetField } from '@/lib/db/queries';
+import {
+  bumpBudget, bumpShiftBudget, releaseBudget, releaseShiftBudget, type BudgetField,
+} from '@/lib/db/queries';
 import { checkLiveAppDetailed } from '@/lib/adapters/liveapp';
 import { checkRepoDetailed, type FetchLike } from '@/lib/adapters/repo';
 import { checkChain } from '@/lib/adapters/chain';
 import { checkVibestarter } from '@/lib/adapters/vibestarter';
 import { DEFAULT_BASE_RPC, getBaseClient, type RpcLike } from '@/lib/adapters/baseRpc';
-import { attestMany, attestOne, type AttestDeps } from '@/lib/attest/eas';
+import { attestMany, attestOne, attestationReceipt, type AttestDeps, type AttestReceipt } from '@/lib/attest/eas';
 import { getPublicClient, getWallet, type AnyPublicClient } from '@/lib/attest/signer';
 import { safeFetch } from '@/lib/net/safeFetch';
 import { explainNight } from './explain';
@@ -27,7 +30,7 @@ export interface ShiftDeps {
   now: () => Date;
   /** Pre-bound caps: true = amount reserved, false = over a cap (fail closed). */
   budget: (field: BudgetField, amount: number | bigint) => Promise<boolean>;
-  /** Refund a reservation (gas before broadcast, a lost live-run race). */
+  /** Refund a reservation (gas before broadcast, unused LLM tokens, a lost live-run race). */
   release?: (field: BudgetField, amount: number | bigint) => Promise<void>;
   attest: typeof attestOne;
   attestMany: typeof attestMany;
@@ -36,11 +39,14 @@ export interface ShiftDeps {
   onFinalized?: (shiftId: number) => Promise<void>;
   /** Test seams / overrides; defaults are the real adapters. */
   adapters?: Partial<Adapters>;
-  /** Watcher wallet + read client; absent or wallet null -> attestation `disabled`. */
+  /** Watcher wallet + read client; wallet null -> attestation `disabled`. */
   signer?: { wallet: AttestDeps['wallet']; publicClient: AnyPublicClient };
+  /** Settles a broadcast tx (defaults to attestationReceipt on signer.publicClient). */
+  attestReceipt?: (txHash: Hex) => Promise<AttestReceipt>;
   /** Base RPC for chain/vibestarter adapters (defaults to getBaseClient() inside them). */
   rpc?: RpcLike;
   githubToken?: string;
+  /** ERC-8004 agent id of the watcher. Missing or 0 -> nothing is attested. */
   agentId?: bigint;
   siteUrl?: string;
 }
@@ -54,14 +60,26 @@ export function resolveAdapters(deps: ShiftDeps): Adapters {
   };
 }
 
-export function attestDepsFor(deps: ShiftDeps): AttestDeps {
+/** An attestation needs a registered watcher identity: never attest with agentId 0. */
+export function canAttest(deps: Pick<ShiftDeps, 'agentId'>): boolean {
+  return typeof deps.agentId === 'bigint' && deps.agentId > 0n;
+}
+
+export function attestDepsFor(deps: ShiftDeps, onBroadcast?: (txHash: Hex) => Promise<void>): AttestDeps {
   return {
-    wallet: deps.signer?.wallet ?? null,
+    wallet: canAttest(deps) ? deps.signer?.wallet ?? null : null,
     // Never read when wallet is null: attest returns { skipped: 'disabled' } first.
     publicClient: (deps.signer?.publicClient ?? null) as unknown as AnyPublicClient,
     budget: (wei) => deps.budget('gas_wei', wei),
     release: async (wei) => { await deps.release?.('gas_wei', wei); },
+    ...(onBroadcast ? { onBroadcast } : {}),
   };
+}
+
+export function receiptOf(deps: ShiftDeps): ((txHash: Hex) => Promise<AttestReceipt>) | null {
+  if (deps.attestReceipt) return deps.attestReceipt;
+  const pc = deps.signer?.publicClient;
+  return pc ? (tx) => attestationReceipt(tx, pc) : null;
 }
 
 export const DEFAULT_SITE_URL = 'https://lights-on.vercel.app';
@@ -74,20 +92,25 @@ function envAgentId(raw: string | undefined): bigint {
 }
 
 /**
- * Production deps. `shiftId` binds the per-shift LLM and GitHub caps; live runs get a 3-call GitHub cap per run.
+ * Production deps. `shiftId` binds the per-shift LLM and GitHub caps. Live runs share the daily gas/LLM counters with
+ * the nightly shift but stop `nightlyReserve` short of the cap, so public traffic can never starve the nightly
+ * attestation; live runs also get a 3-call GitHub cap per run.
  * Reads process.env directly (not the zod proxy) so a missing optional variable degrades instead of throwing.
  */
 export function makeShiftDeps(db: Db, opts: { kind: Kind; shiftId?: number; onFinalized?: ShiftDeps['onFinalized'] }): ShiftDeps {
   const env = process.env;
   const now = () => new Date();
   const day = () => utcDay(now());
+  const live = opts.kind === 'live';
+  const llmDayCap = live ? CAPS.llmTokensPerDay - CAPS.nightlyReserveTokens : CAPS.llmTokensPerDay;
+  const gasDayCap = live ? CAPS.gasWeiPerDay - CAPS.nightlyReserveWei : CAPS.gasWeiPerDay;
   let localGithub = 0;
 
   const budget = async (field: BudgetField, amount: number | bigint): Promise<boolean> => {
     switch (field) {
       case 'llm_tokens': {
         const d = day();
-        if (!(await bumpBudget(db, d, 'llm_tokens', amount, CAPS.llmTokensPerDay))) return false;
+        if (!(await bumpBudget(db, d, 'llm_tokens', amount, llmDayCap))) return false;
         if (opts.shiftId !== undefined && !(await bumpShiftBudget(db, opts.shiftId, 'llm_tokens', amount, CAPS.llmTokensPerShift))) {
           await releaseBudget(db, d, 'llm_tokens', amount);
           return false;
@@ -96,7 +119,7 @@ export function makeShiftDeps(db: Db, opts: { kind: Kind; shiftId?: number; onFi
       }
       case 'github_calls': {
         const n = Number(amount);
-        if (opts.kind === 'live') {
+        if (live) {
           if (localGithub + n > CAPS.githubCallsPerLiveRun) return false;
           if (!(await bumpBudget(db, day(), 'github_calls', n, CAPS.githubLiveCallsPerDay))) return false;
           localGithub += n;
@@ -108,25 +131,29 @@ export function makeShiftDeps(db: Db, opts: { kind: Kind; shiftId?: number; onFi
         return true;
       }
       case 'gas_wei':
-        return bumpBudget(db, day(), 'gas_wei', amount, CAPS.gasWeiPerDay);
+        return bumpBudget(db, day(), 'gas_wei', amount, gasDayCap);
       case 'live_runs':
         return bumpBudget(db, day(), 'live_runs', amount, CAPS.liveRunsPerDay);
     }
   };
 
+  const release = async (field: BudgetField, amount: number | bigint): Promise<void> => {
+    await releaseBudget(db, day(), field, amount);
+    if (field === 'llm_tokens' && opts.shiftId !== undefined) await releaseShiftBudget(db, opts.shiftId, 'llm_tokens', amount);
+  };
+
   const rpcUrl = env.BASE_RPC_URL || DEFAULT_BASE_RPC;
-  const wallet = getWallet(rpcUrl);
   return {
     db,
     fetch: (url, init) => safeFetch(url, init),
     now,
     budget,
-    release: (field, amount) => releaseBudget(db, day(), field, amount),
+    release,
     attest: attestOne,
     attestMany,
     explain: explainNight,
     onFinalized: opts.onFinalized,
-    signer: wallet ? { wallet, publicClient: getPublicClient(rpcUrl) } : undefined,
+    signer: { wallet: getWallet(rpcUrl), publicClient: getPublicClient(rpcUrl) },
     rpc: getBaseClient(),
     githubToken: env.GITHUB_READ_TOKEN || undefined,
     agentId: envAgentId(env.WATCHER_AGENT_ID),

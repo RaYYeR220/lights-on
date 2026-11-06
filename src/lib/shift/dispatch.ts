@@ -1,7 +1,6 @@
 import { createNightlyShift, listProjects, markShiftRunDone } from '@/lib/db/queries';
-import { safeErrorCode } from '@/lib/net/redact';
 import type { ShiftDeps } from './deps';
-import { finalizeShift, maybeFinalizeStale } from './finalize';
+import { finalizeShift } from './finalize';
 import { nightDate, nightNumber, shiftStartFor } from './night';
 
 /** accepted = 202 from /api/shift/run; refused = it definitely did not start; unknown = timeout / gateway error. */
@@ -29,13 +28,9 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 /**
  * Create tonight's nightly shift (idempotent on the night: a cron retry gets created=false and fires nothing) and fire
  * one run per watched project, at most 6 in flight. Each run reports back by incrementing `shifts.done`.
+ * Tonight comes first: the stale pass for older shifts is the caller's job, afterwards (the route runs it in after()).
  */
 export async function dispatchShift(now: Date, deps: DispatchDeps): Promise<{ shiftId: number; planned: number; created: boolean }> {
-  try {
-    await maybeFinalizeStale(deps);
-  } catch (e) {
-    console.error('shift.stale failed:', safeErrorCode(e));
-  }
   const night = nightDate(nightNumber(shiftStartFor(now)));
   const projects = await listProjects(deps.db);
   const { shift, created } = await createNightlyShift(deps.db, { night, startedAt: now, planned: projects.length });

@@ -13,7 +13,7 @@ import type {
 import { decideStatus } from './rules';
 import { hashEvidence, RULES_VERSION } from './evidence';
 import type { Explanation } from './explain';
-import { attestDepsFor, resolveAdapters, type ShiftDeps } from './deps';
+import { attestDepsFor, canAttest, resolveAdapters, type ShiftDeps } from './deps';
 import { finalizeShift, lit30From, lit30Of, toAttestation } from './finalize';
 import { nightDate, nightNumber, nightlyWindow, shiftStartOfNight } from './night';
 
@@ -37,7 +37,8 @@ export interface RunOptions {
   liveRunId?: number;
   ipHash?: string;
 }
-export type AttestOutcome = { uid: Hex; txHash: Hex } | { skipped: string; error?: string };
+/** `txHash` on a skipped outcome = broadcast but not confirmed (or confirmed reverted when error is 'reverted'). */
+export type AttestOutcome = { uid: Hex; txHash: Hex } | { skipped: string; error?: string; txHash?: Hex };
 export interface RunResult {
   night: number; status: Status; evidenceHash: Hex; nightId?: number; liveRunId?: number; attestation?: AttestOutcome;
 }
@@ -180,13 +181,20 @@ async function gather(
     }
     step(name, 'start');
     let res: AnyResult;
+    let state: Step['state'];
+    let detail: string;
     try {
       res = plain(await job());
       res.source = name;
+      // inside the try: facts of an unexpected shape fail this source, never the run
+      state = stateOf(name, res);
+      detail = detailOf(name, res, name === 'liveapp' ? prev.live !== null : true);
     } catch (e) {
       res = { source: name, tier: 'verified', ok: false, facts: null, error: safeErrorCode(e) };
+      state = 'fail';
+      detail = `unavailable (${res.error})`;
     }
-    step(name, stateOf(name, res), detailOf(name, res, name === 'liveapp' ? prev.live !== null : true));
+    step(name, state, detail);
     return res;
   }));
 
@@ -203,12 +211,23 @@ async function gather(
   };
 }
 
+/** Explain within the LLM caps; afterwards the unused part of the reservations (reserved - used) is refunded. */
 async function safeExplain(b: EvidenceBundle, d: Decision, deps: ShiftDeps): Promise<Explanation> {
+  let reserved = 0;
+  const budget = async (n: number) => {
+    const ok = await deps.budget('llm_tokens', n);
+    if (ok) reserved += n;
+    return ok;
+  };
+  let ex: Explanation;
   try {
-    return await deps.explain(b, d, { budget: (n) => deps.budget('llm_tokens', n) });
+    ex = await deps.explain(b, d, { budget });
   } catch {
-    return { aiOk: false, summary: null, notable: [], aiSubstance: null, model: null, tokens: 0 };
+    ex = { aiOk: false, summary: null, notable: [], aiSubstance: null, model: null, tokens: 0 };
   }
+  const unused = reserved - Math.max(0, Math.ceil(ex.tokens || 0));
+  if (unused > 0) await deps.release?.('llm_tokens', unused)?.catch(() => undefined);
+  return ex;
 }
 
 /** Compact per-source facts for the nights row (the full facts live in the evidence bundle). */
@@ -257,6 +276,7 @@ function signalsOf(b: EvidenceBundle, d: Decision, ex: Explanation): Record<stri
 
 function attestDetail(o: AttestOutcome): string {
   if ('uid' in o) return `attested · uid ${short(o.uid)}`;
+  if (o.txHash && o.error !== 'reverted') return `sent, not confirmed yet · tx ${short(o.txHash)}`;
   if (o.skipped === 'gas_cap') return 'skipped (daily gas cap)';
   if (o.skipped === 'disabled') return 'skipped (attestation disabled)';
   return `skipped (${o.error ? firstNote(o.error) : o.skipped})`;
@@ -344,17 +364,29 @@ export async function runProject(
       deps,
     );
     let outcome: AttestOutcome;
-    try {
-      const r = await deps.attest(att, attestDepsFor(deps));
-      outcome = 'skipped' in r ? { skipped: r.skipped, ...(r.error ? { error: r.error } : {}) } : { uid: r.uid, txHash: r.txHash };
-    } catch (e) {
-      outcome = { skipped: 'error', error: safeErrorCode(e) };
+    if (!canAttest(deps)) {
+      outcome = { skipped: 'disabled' }; // no registered watcher identity: never attest agentId 0
+    } else {
+      let sent: Hex | undefined;
+      const onBroadcast = async (h: Hex) => { sent = h; };
+      try {
+        const r = await deps.attest(att, attestDepsFor(deps, onBroadcast));
+        if ('skipped' in r) {
+          const tx = r.txHash ?? sent;
+          outcome = { skipped: r.skipped, ...(r.error ? { error: r.error } : {}), ...(tx ? { txHash: tx } : {}) };
+        } else {
+          outcome = { uid: r.uid, txHash: r.txHash };
+        }
+      } catch (e) {
+        outcome = { skipped: 'error', error: safeErrorCode(e), ...(sent ? { txHash: sent } : {}) };
+      }
     }
     step('attest', 'uid' in outcome ? 'ok' : 'warn', attestDetail(outcome));
     await updateLiveRun(db, liveRunId!, {
       steps, status: 'done', evidenceHash,
       attestationUid: 'uid' in outcome ? outcome.uid : null,
-      tx: 'uid' in outcome ? outcome.txHash : null,
+      // a broadcast-but-unconfirmed attestation keeps its tx, so it can be looked up later
+      tx: 'uid' in outcome || (outcome.txHash && outcome.error !== 'reverted') ? outcome.txHash ?? null : null,
     });
     return { night, status: decision.status, evidenceHash, liveRunId, attestation: outcome };
   } catch (e) {
@@ -405,7 +437,9 @@ export async function runShiftProject(
       await finalizeShift(shiftId, deps);
       finalized = true;
     } catch (e) {
-      console.error('shift.finalize failed:', safeErrorCode(e)); // the stale guard retries
+      // finalizeShift handles its own failures (status attest_pending); this only catches a dead DB. The shift is then
+      // still unfinished, so a later stale pass (dispatch or run route) picks it up after 45 min.
+      console.error('shift.finalize failed:', safeErrorCode(e));
     }
   }
   return code ? { ok: false, code, finalized } : { ok: true, finalized };

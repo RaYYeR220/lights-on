@@ -1,8 +1,10 @@
+import { after } from 'next/server';
 import { getDb } from '@/lib/db';
 import { bearerEquals, json } from '@/lib/net/http';
 import { safeErrorCode } from '@/lib/net/redact';
 import { makeShiftDeps } from '@/lib/shift/deps';
 import { dispatchShift, httpTrigger } from '@/lib/shift/dispatch';
+import { maybeFinalizeStale } from '@/lib/shift/finalize';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +23,8 @@ export async function GET(req: Request): Promise<Response> {
     const base = process.env.INTERNAL_BASE_URL || new URL(req.url).origin;
     const deps = { ...makeShiftDeps(db, { kind: 'nightly' }), trigger: httpTrigger(base, token) };
     const r = await dispatchShift(new Date(), deps);
+    // Tonight's shift is created and its runs are fired; only now settle older shifts (bounded to 60 s).
+    after(() => maybeFinalizeStale(deps).catch((e) => { console.error('shift.stale failed:', safeErrorCode(e)); }));
     return json(r, 200);
   } catch (e) {
     console.error('shift.dispatch failed:', safeErrorCode(e));

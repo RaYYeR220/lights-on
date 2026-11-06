@@ -4,7 +4,7 @@ import { NOW, seedProject } from '../helpers/shift';
 import type { Db } from '@/lib/db';
 import { liveRuns } from '@/lib/db/schema';
 import { bumpBudget, releaseBudget, type BudgetField } from '@/lib/db/queries';
-import { checkLiveLimit, hashIp, clientIp, CAPS, LIVE_LIMITS } from '@/lib/shift/limits';
+import { checkLiveLimit, hashIp, clientIp, ipKey, CAPS, LIVE_LIMITS } from '@/lib/shift/limits';
 
 let db: Db;
 beforeEach(async () => { db = await makeTestDb(); });
@@ -91,6 +91,21 @@ describe('ip hashing', () => {
     expect(hashIp('203.0.113.7', '2026-11-06', 'secret')).toBe(h1);
     expect(hashIp('203.0.113.7', '2026-11-07', 'secret')).not.toBe(h1);
     expect(hashIp('203.0.113.8', '2026-11-06', 'secret')).not.toBe(h1);
+  });
+
+  it('refuses to hash without a secret (no constant salt)', () => {
+    expect(() => hashIp('203.0.113.7', '2026-11-06', '')).toThrow();
+  });
+
+  it('keys IPv6 on its /64; IPv4 and IPv4-mapped IPv6 on the address', () => {
+    expect(ipKey('2001:db8:1:2:aaaa::1')).toBe(ipKey('2001:0db8:0001:0002:ffff:eeee:dddd:cccc'));
+    expect(ipKey('2001:db8:1:2::1')).toBe('2001:db8:1:2::/64');
+    expect(ipKey('2001:db8:1:3::1')).not.toBe(ipKey('2001:db8:1:2::1'));
+    expect(ipKey('[2001:db8:1:2::9]')).toBe('2001:db8:1:2::/64');
+    expect(ipKey('::ffff:203.0.113.7')).toBe('203.0.113.7');
+    expect(ipKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(hashIp('2001:db8:1:2::1', 'd', 's')).toBe(hashIp('2001:db8:1:2:dead:beef::', 'd', 's'));
+    expect(ipKey('unknown')).toBe('unknown');
   });
 
   it('clientIp prefers x-real-ip, then the first x-forwarded-for hop', () => {

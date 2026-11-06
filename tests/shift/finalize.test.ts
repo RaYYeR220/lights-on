@@ -2,21 +2,24 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { makeTestDb } from '../helpers/db';
 import { makeDeps, seedProject, NOW, TX, uidOf, until } from '../helpers/shift';
 import type { Db } from '@/lib/db';
-import { liveRuns, shifts } from '@/lib/db/schema';
+import { liveRuns, nights, shifts } from '@/lib/db/schema';
 import {
-  createNightlyShift, getEvidence, getNights, getShift, insertNight,
+  createNightlyShift, getEvidence, getNights, getShift, insertNight, listStaleShifts, updateShift,
 } from '@/lib/db/queries';
 import { dispatchShift } from '@/lib/shift/dispatch';
 import { finalizeShift, maybeFinalizeStale } from '@/lib/shift/finalize';
 import { runProject, runShiftProject, liveWindow } from '@/lib/shift/run';
-import type { NightAttestation } from '@/lib/attest/eas';
-import { keccak256, toBytes } from 'viem';
+import type { AttestDeps, NightAttestation } from '@/lib/attest/eas';
+import { keccak256, toBytes, type Hex } from 'viem';
+import { asc, eq } from 'drizzle-orm';
 
 let db: Db;
 beforeEach(async () => { db = await makeTestDb(); });
 
 type Mock = ReturnType<typeof vi.fn>;
 const HASH = (i: number) => `0x${i.toString(16).padStart(64, 'e')}`;
+const TX2 = `0x${'cd'.repeat(32)}` as Hex;
+const nightsOf = (shiftId: number) => db.select().from(nights).where(eq(nights.shiftId, shiftId)).orderBy(asc(nights.id));
 
 async function shiftWithNights(n: number, night = '2026-11-06') {
   const { shift } = await createNightlyShift(db, { night, startedAt: NOW, planned: n });
@@ -109,7 +112,7 @@ describe('finalizeShift', () => {
     expect(deps.attestMany).toHaveBeenCalledTimes(1);
     const ns = (deps.attestMany as Mock).mock.calls[0][0] as NightAttestation[];
     expect(ns.map((n) => n.projectKey)).toEqual(projects.map((p) => keccak256(toBytes(p.slug))));
-    expect(ns[0]).toMatchObject({ night: 20261106, kind: 0, status: 1, lit30: 1, evidenceHash: HASH(0), agentId: 0n });
+    expect(ns[0]).toMatchObject({ night: 20261106, kind: 0, status: 1, lit30: 1, evidenceHash: HASH(0), agentId: 42n });
     expect(ns[0].evidenceURI.endsWith(`/api/v1/evidence/${HASH(0)}`)).toBe(true);
     const uids = (await Promise.all(projects.map((p) => getNights(db, p.id)))).map((x) => x[0].attestationUid);
     expect(new Set(uids).size).toBe(3);
@@ -179,22 +182,31 @@ describe('finalizeShift', () => {
     expect(onFinalized).toHaveBeenCalledTimes(1);
   });
 
-  it('attests in batches of 20 and releases later batches after a skip', async () => {
+  it('attests in batches of 20; a broadcast batch with an unknown outcome stays claimed, later batches are released', async () => {
     const { shift } = await shiftWithNights(45);
     let call = 0;
     const attestMany = vi.fn(async (ns: NightAttestation[]) => {
       call++;
-      if (call === 2) return { skipped: 'error' as const, error: 'reverted' };
+      if (call === 2) return { skipped: 'error' as const, error: 'timeout', txHash: TX2 }; // sent, receipt wait failed
       return { uids: ns.map((_, i) => uidOf(call * 100 + i)), txHash: TX };
     });
     const { deps } = makeDeps(db, { attestMany: attestMany as never });
     const r = await finalizeShift(shift.id, deps);
     expect(attestMany.mock.calls.map((c) => c[0].length)).toEqual([20, 20]);
-    expect(r).toEqual({ attested: 20, txHash: TX, skipped: 'error' });
-    const s = await getShift(db, shift.id);
-    expect(s).toMatchObject({ status: 'attest_pending', notes: 'skipped:error:reverted' });
-    const r2 = await finalizeShift(shift.id, makeDeps(db).deps);
-    expect(r2.attested).toBe(25);
+    expect(r).toEqual({ attested: 20, txHash: TX, skipped: 'unconfirmed' });
+    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attest_pending', notes: 'unconfirmed:timeout' });
+    const rows = await nightsOf(shift.id);
+    const batch2 = rows.slice(20, 40);
+    expect(batch2.every((n) => n.attestClaimedAt !== null && n.attestTx === TX2 && n.attestationUid === null)).toBe(true);
+    expect(rows.slice(40).every((n) => n.attestClaimedAt === null && n.attestTx === null)).toBe(true);
+
+    // next pass: receipt not there yet -> batch 2 untouched; only the 5 never-sent rows go out
+    const pending = vi.fn(async () => ({ status: 'not_found' as const }));
+    const d2 = makeDeps(db, { attestReceipt: pending }).deps;
+    expect(await finalizeShift(shift.id, d2)).toMatchObject({ attested: 5 });
+    expect(((d2.attestMany as Mock).mock.calls[0][0] as NightAttestation[]).length).toBe(5);
+    expect(pending).toHaveBeenCalledWith(TX2);
+    expect((await nightsOf(shift.id)).slice(20, 40).every((n) => n.attestationUid === null && n.attestTx === TX2)).toBe(true);
   });
 
   it('lit30 counts reconstructed nights (observed wins on the same night)', async () => {
@@ -238,5 +250,181 @@ describe('finalizeShift', () => {
     const { deps } = makeDeps(db, { attestMany: vi.fn(async () => ({ skipped: 'disabled' as const })) as never });
     expect(await finalizeShift(shift.id, deps)).toEqual({ attested: 0, skipped: 'disabled' });
     expect((await getShift(db, shift.id))?.status).toBe('attest_pending');
+  });
+});
+
+describe('post-broadcast reconciliation (no double attestation)', () => {
+  /** attestMany that broadcasts (onBroadcast) and then loses the receipt. */
+  const lostReceipt = (tx: Hex) => vi.fn(async (_ns: NightAttestation[], d: AttestDeps) => {
+    await d.onBroadcast?.(tx);
+    return { skipped: 'error' as const, error: 'timeout', txHash: tx };
+  });
+
+  it('error after broadcast -> rows stay claimed with attest_tx; a mined receipt fills uids in batch order; never re-sent', async () => {
+    const { shift } = await shiftWithNights(3);
+    const first = makeDeps(db, { attestMany: lostReceipt(TX2) as never }).deps;
+    expect(await finalizeShift(shift.id, first)).toEqual({ attested: 0, skipped: 'unconfirmed' });
+    let rows = await nightsOf(shift.id);
+    expect(rows.every((n) => n.attestClaimedAt !== null && n.attestTx === TX2 && n.attestationUid === null)).toBe(true);
+    expect((await getShift(db, shift.id))?.status).toBe('attest_pending');
+
+    const uids = [uidOf(701), uidOf(702), uidOf(703)];
+    const attestReceipt = vi.fn(async () => ({ status: 'success' as const, uids }));
+    const { deps, clock } = makeDeps(db, { attestReceipt });
+    clock.now = new Date(NOW.getTime() + 46 * 60_000);
+    expect(await maybeFinalizeStale(deps)).toBe(1);
+    rows = await nightsOf(shift.id);
+    expect(rows.map((n) => n.attestationUid)).toEqual(uids); // id ascending = the order the batch was sent
+    expect(rows.every((n) => n.attestTx === TX2)).toBe(true);
+    expect(deps.attestMany).not.toHaveBeenCalled(); // never a second multiAttest for these rows
+    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attested', notes: null });
+  });
+
+  it('a confirmed revert on reconcile releases the rows, which are then attested exactly once', async () => {
+    const { shift } = await shiftWithNights(2);
+    await finalizeShift(shift.id, makeDeps(db, { attestMany: lostReceipt(TX2) as never }).deps);
+    const { deps } = makeDeps(db, { attestReceipt: vi.fn(async () => ({ status: 'reverted' as const })) });
+    expect(await finalizeShift(shift.id, deps)).toEqual({ attested: 2, txHash: TX });
+    expect(deps.attestMany).toHaveBeenCalledTimes(1);
+    expect((await nightsOf(shift.id)).every((n) => n.attestationUid !== null && n.attestTx === TX)).toBe(true);
+  });
+
+  it('a revert reported by attestMany itself releases at once', async () => {
+    const { shift } = await shiftWithNights(2);
+    const reverted = vi.fn(async () => ({ skipped: 'error' as const, error: 'reverted', txHash: TX2 }));
+    expect(await finalizeShift(shift.id, makeDeps(db, { attestMany: reverted as never }).deps))
+      .toEqual({ attested: 0, skipped: 'error' });
+    expect((await nightsOf(shift.id)).every((n) => n.attestClaimedAt === null && n.attestTx === null)).toBe(true);
+    expect((await getShift(db, shift.id))?.notes).toBe('skipped:error:reverted');
+  });
+
+  it('receipt still missing: kept for 30 min, then treated as dropped and released', async () => {
+    const { shift } = await shiftWithNights(1);
+    await finalizeShift(shift.id, makeDeps(db, { attestMany: lostReceipt(TX2) as never }).deps);
+    const notFound = vi.fn(async () => ({ status: 'not_found' as const }));
+    const soon = makeDeps(db, { attestReceipt: notFound });
+    soon.clock.now = new Date(NOW.getTime() + 20 * 60_000);
+    expect(await finalizeShift(shift.id, soon.deps)).toEqual({ attested: 0 });
+    expect(soon.deps.attestMany).not.toHaveBeenCalled();
+    const later = makeDeps(db, { attestReceipt: notFound });
+    later.clock.now = new Date(NOW.getTime() + 31 * 60_000);
+    expect(await finalizeShift(shift.id, later.deps)).toEqual({ attested: 1, txHash: TX });
+    expect(later.deps.attestMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('an RPC error or a uid-count mismatch on reconcile leaves the rows claimed', async () => {
+    const { shift } = await shiftWithNights(2);
+    await finalizeShift(shift.id, makeDeps(db, { attestMany: lostReceipt(TX2) as never }).deps);
+    for (const rc of [{ status: 'error' as const, error: 'timeout' }, { status: 'success' as const, uids: [uidOf(1)] }]) {
+      const { deps, clock } = makeDeps(db, { attestReceipt: vi.fn(async () => rc) });
+      clock.now = new Date(NOW.getTime() + 2 * 3600_000);
+      expect(await finalizeShift(shift.id, deps)).toEqual({ attested: 0 });
+      expect(deps.attestMany).not.toHaveBeenCalled();
+      expect((await nightsOf(shift.id)).every((n) => n.attestTx === TX2 && n.attestClaimedAt !== null && !n.attestationUid)).toBe(true);
+    }
+  });
+
+  it('attestMany dying after the broadcast (no return) keeps the claim and the tx', async () => {
+    const { shift } = await shiftWithNights(2);
+    const dies = vi.fn(async (_ns: NightAttestation[], d: AttestDeps) => {
+      await d.onBroadcast?.(TX2);
+      throw new Error('function killed');
+    });
+    expect(await finalizeShift(shift.id, makeDeps(db, { attestMany: dies as never }).deps)).toMatchObject({ skipped: 'unconfirmed' });
+    expect((await nightsOf(shift.id)).every((n) => n.attestTx === TX2 && n.attestClaimedAt !== null)).toBe(true);
+  });
+
+  it('a throw after the claim (uid write fails) -> attest_pending, tx kept, the stale pass settles it from the receipt', async () => {
+    const { shift } = await shiftWithNights(2);
+    let failed = false;
+    const flaky = Object.create(db) as Db;
+    flaky.execute = ((q: never) => {
+      if (!failed) { failed = true; throw new Error('db down'); }
+      return db.execute(q);
+    }) as Db['execute'];
+    const onFinalized = vi.fn(async () => {});
+    const { deps } = makeDeps(flaky, { onFinalized });
+    expect(await finalizeShift(shift.id, deps)).toMatchObject({ attested: 0, skipped: 'error' });
+    expect(deps.attestMany).toHaveBeenCalledTimes(1);
+    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attest_pending', notes: 'skipped:error:error' });
+    expect((await nightsOf(shift.id)).every((n) => n.attestTx === TX && n.attestClaimedAt !== null && !n.attestationUid)).toBe(true);
+    expect(onFinalized).toHaveBeenCalledTimes(1); // the shift still closes; briefings go out
+
+    const uids = [uidOf(1), uidOf(2)];
+    const later = makeDeps(db, { attestReceipt: vi.fn(async () => ({ status: 'success' as const, uids })) });
+    later.clock.now = new Date(NOW.getTime() + 46 * 60_000);
+    expect(await maybeFinalizeStale(later.deps)).toBe(1);
+    expect((await nightsOf(shift.id)).map((n) => n.attestationUid)).toEqual(uids);
+    expect(later.deps.attestMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('stale recovery', () => {
+  it('listStaleShifts also returns a finished shift left running', async () => {
+    const { shift } = await createNightlyShift(db, { night: '2026-11-06', startedAt: NOW, planned: 1 });
+    await updateShift(db, shift.id, { finishedAt: NOW, status: 'running' });
+    expect(await listStaleShifts(db, new Date(NOW.getTime() + 30 * 60_000), 45 * 60_000)).toHaveLength(0);
+    expect((await listStaleShifts(db, new Date(NOW.getTime() + 46 * 60_000), 45 * 60_000)).map((s) => s.id)).toEqual([shift.id]);
+  });
+
+  it('onFinalized fires after the attestation writes', async () => {
+    const { shift, projects } = await shiftWithNights(1);
+    let seen: string | null | undefined;
+    const onFinalized = vi.fn(async () => { seen = (await getNights(db, projects[0].id))[0].attestationUid; });
+    await finalizeShift(shift.id, makeDeps(db, { onFinalized }).deps);
+    expect(seen).toBe(uidOf(1));
+  });
+
+  it('agentId missing or 0 -> nothing attested, rows not claimed, shift attest_pending', async () => {
+    const { shift } = await shiftWithNights(1);
+    for (const agentId of [undefined, 0n]) {
+      const { deps } = makeDeps(db, { agentId });
+      expect(await finalizeShift(shift.id, deps)).toEqual({ attested: 0, skipped: 'disabled' });
+      expect(deps.attestMany).not.toHaveBeenCalled();
+    }
+    expect((await nightsOf(shift.id))[0].attestClaimedAt).toBeNull();
+    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attest_pending', notes: 'skipped:disabled' });
+  });
+
+  it('concurrent stale passes lease a finished shift: its receipt is checked once', async () => {
+    const { shift } = await shiftWithNights(2);
+    const lost = vi.fn(async (_ns: NightAttestation[], d: AttestDeps) => {
+      await d.onBroadcast?.(TX2);
+      return { skipped: 'error' as const, error: 'timeout', txHash: TX2 };
+    });
+    await finalizeShift(shift.id, makeDeps(db, { attestMany: lost as never }).deps);
+    const attestReceipt = vi.fn(async () => ({ status: 'success' as const, uids: [uidOf(1), uidOf(2)] }));
+    const { deps, clock } = makeDeps(db, { attestReceipt });
+    clock.now = new Date(NOW.getTime() + 46 * 60_000);
+    const ns = await Promise.all([maybeFinalizeStale(deps), maybeFinalizeStale(deps), maybeFinalizeStale(deps)]);
+    expect(ns.reduce((a, b) => a + b, 0)).toBe(1);
+    expect(attestReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stale pass stops starting shifts after its wall-clock bound', async () => {
+    const a = await shiftWithNights(1, '2026-11-05');
+    const { shift: s2 } = await createNightlyShift(db, { night: '2026-11-04', startedAt: new Date(NOW.getTime() - 3600_000), planned: 0 });
+    let t = 0;
+    const attestMany = vi.fn(async (ns: NightAttestation[]) => {
+      t = 61_000; // the first batch runs past the bound
+      return { uids: ns.map((_, i) => uidOf(i + 1)), txHash: TX };
+    });
+    const { deps, clock } = makeDeps(db, { attestMany: attestMany as never });
+    clock.now = new Date(NOW.getTime() + 46 * 60_000);
+    expect(await maybeFinalizeStale(deps, { maxMs: 60_000, clock: () => t })).toBe(1);
+    expect((await getShift(db, a.shift.id))?.status).toBe('attested');
+    expect((await getShift(db, s2.id))?.finishedAt).toBeNull(); // never started: over the bound
+  });
+
+  it('dispatch does not run the stale pass (tonight first; the route runs it afterwards)', async () => {
+    const { shift } = await shiftWithNights(1, '2026-11-05');
+    const later = new Date(NOW.getTime() + 24 * 3600_000);
+    const { deps, clock } = makeDeps(db);
+    clock.now = later;
+    const trigger = vi.fn(async () => 'accepted' as const);
+    const d = await dispatchShift(later, { ...deps, trigger });
+    expect(d.created).toBe(true);
+    expect(deps.attestMany).not.toHaveBeenCalled();
+    expect((await getShift(db, shift.id))?.finishedAt).toBeNull();
   });
 });

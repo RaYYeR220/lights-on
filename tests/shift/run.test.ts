@@ -6,6 +6,7 @@ import type { Db } from '@/lib/db';
 import { liveRuns, snapshots } from '@/lib/db/schema';
 import {
   createNightlyShift, getEvidence, getLastSnapshot, getNights, getShift, insertNight, saveSnapshot, DuplicateNight,
+  bumpBudget, releaseBudget,
 } from '@/lib/db/queries';
 import { runProject, runShiftProject, liveWindow } from '@/lib/shift/run';
 import { nightlyWindow, shiftStartFor, nightNumber } from '@/lib/shift/night';
@@ -210,7 +211,7 @@ describe('runProject (live)', () => {
     const { deps } = makeDeps(db);
     const r = await runProject(p.id, 'live', await liveWindow(db, p.id, NOW), deps);
     const n = (deps.attest as ReturnType<typeof vi.fn>).mock.calls[0][0] as NightAttestation;
-    expect(n).toMatchObject({ night: 20261106, kind: 1, status: 2, lit30: 2, evidenceHash: r.evidenceHash, agentId: 0n });
+    expect(n).toMatchObject({ night: 20261106, kind: 1, status: 2, lit30: 2, evidenceHash: r.evidenceHash, agentId: 42n });
     expect(n.evidenceURI).toMatch(new RegExp(`/api/v1/evidence/${r.evidenceHash}$`));
     expect(() => encodeNight(n)).not.toThrow();
     const [run] = await db.select().from(liveRuns);
@@ -230,6 +231,59 @@ describe('runProject (live)', () => {
     expect(la[1]).toMatchObject({ deployFingerprint: 'fp1' });
     expect(la[2]).toMatchObject({ prevText: 'old text' });
     expect((deps.adapters!.repo as ReturnType<typeof vi.fn>).mock.calls[0][2]).toBe('head1');
+  });
+
+  it('no watcher agentId -> live attestation disabled, attest never called', async () => {
+    const p = await seedProject(db, 'alpha');
+    for (const agentId of [undefined, 0n]) {
+      const { deps } = makeDeps(db, { agentId });
+      const steps: Step[] = [];
+      const r = await runProject(p.id, 'live', await liveWindow(db, p.id, NOW), deps, (s) => steps.push(s));
+      expect(r.attestation).toEqual({ skipped: 'disabled' });
+      expect(deps.attest).not.toHaveBeenCalled();
+      expect(steps.at(-1)).toMatchObject({ key: 'attest', state: 'warn', detail: 'skipped (attestation disabled)' });
+    }
+  });
+
+  it('a broadcast but unconfirmed live attestation keeps its tx (done, no uid)', async () => {
+    const p = await seedProject(db, 'alpha');
+    const tx = `0x${'cd'.repeat(32)}`;
+    const { deps } = makeDeps(db, { attest: vi.fn(async () => ({ skipped: 'error' as const, error: 'timeout', txHash: tx })) as never });
+    const steps: Step[] = [];
+    const r = await runProject(p.id, 'live', await liveWindow(db, p.id, NOW), deps, (s) => steps.push(s));
+    expect(r.attestation).toEqual({ skipped: 'error', error: 'timeout', txHash: tx });
+    const [run] = await db.select().from(liveRuns);
+    expect(run).toMatchObject({ status: 'done', attestationUid: null, tx });
+    expect(steps.at(-1)?.detail).toMatch(/^sent, not confirmed yet · tx 0xcdcdcdcd/);
+  });
+
+  it('refunds the unused LLM reservation after explain', async () => {
+    const p = await seedProject(db, 'alpha');
+    const day = '2026-11-06';
+    const explain = vi.fn(async (_b: unknown, _d: unknown, x: { budget: (n: number) => Promise<boolean> }) => {
+      await x.budget(1000);
+      await x.budget(500);
+      return { aiOk: true, summary: 'Code changes landed.', notable: [], aiSubstance: null, model: 'm', tokens: 300 };
+    });
+    const { deps } = makeDeps(db, {
+      explain: explain as never,
+      budget: (f, n) => bumpBudget(db, day, f, n, 1e9),
+      release: (f, n) => releaseBudget(db, day, f, n),
+    });
+    await runProject(p.id, 'nightly', WINDOW, deps);
+    const r = await db.execute(`select llm_tokens::text as t from budget where day='${day}'` as never);
+    expect((r.rows[0] as { t: string }).t).toBe('300');
+  });
+
+  it('facts of an unexpected shape fail that source only (the step detail is computed inside the guard)', async () => {
+    const p = await seedProject(db, 'alpha');
+    const odd = vi.fn(async () => ({ result: { source: 'repo', tier: 'verified', ok: true, facts: { host: 'github' } }, etag: null }));
+    const { deps } = makeDeps(db, { adapters: stubAdapters({ repo: odd as never }) });
+    const steps: Step[] = [];
+    const r = await runProject(p.id, 'nightly', WINDOW, deps, (s) => steps.push(s));
+    expect(steps.find((s) => s.key === 'repo' && s.state !== 'start')).toMatchObject({ state: 'fail' });
+    expect((await getEvidence(db, r.evidenceHash))?.sources.repo).toMatchObject({ ok: false, facts: null });
+    expect((await getNights(db, p.id))).toHaveLength(1);
   });
 
   it('live window starts at the last nightly shift start, else 24 h back', async () => {

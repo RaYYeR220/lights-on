@@ -172,6 +172,14 @@ export async function bumpShiftBudget(
   return rows.length > 0;
 }
 
+/** Refund part of a per-shift reservation; never below zero. */
+export async function releaseShiftBudget(db: Db, shiftId: number, field: ShiftBudgetField, amount: number | bigint): Promise<void> {
+  if (!(field in SHIFT_BUDGET_COLS)) throw new Error(`unknown shift budget field: ${field}`);
+  const [key, col] = SHIFT_BUDGET_COLS[field];
+  const a = amount.toString();
+  await db.update(shifts).set({ [key]: sql`GREATEST(${col} - ${a}::numeric, 0)` }).where(eq(shifts.id, shiftId));
+}
+
 export async function getShift(db: Db, id: number): Promise<ShiftRow | null> {
   const [row] = await db.select().from(shifts).where(eq(shifts.id, id)).limit(1);
   return row ?? null;
@@ -227,7 +235,8 @@ export async function updateShift(db: Db, id: number, patch: Partial<typeof shif
 
 /**
  * Nightly shifts (at most 48 h old, newest first) that need a finalize pass: never finished and dispatched more than
- * staleMs ago, or finished with attestations still pending and last tried more than staleMs ago.
+ * staleMs ago; or finished but still `attest_pending` / left `running` (a finalize died before its status write),
+ * last tried more than staleMs ago.
  */
 export async function listStaleShifts(db: Db, now: Date, staleMs: number): Promise<ShiftRow[]> {
   const cutoff = new Date(now.getTime() - staleMs);
@@ -240,20 +249,30 @@ export async function listStaleShifts(db: Db, now: Date, staleMs: number): Promi
       gt(shifts.startedAt, oldest),
       or(
         and(isNull(shifts.finishedAt), lt(shifts.startedAt, cutoff)),
-        and(eq(shifts.status, 'attest_pending'), lt(shifts.finishedAt, cutoff)),
+        and(inArray(shifts.status, ['attest_pending', 'running']), lt(shifts.finishedAt, cutoff)),
       ),
     ))
     .orderBy(desc(shifts.startedAt))
     .limit(5);
 }
 
+/** Retry lease for a finished shift: true for one caller per staleMs window (moves finished_at to now). */
+export async function leaseStaleShift(db: Db, shiftId: number, now: Date, cutoff: Date): Promise<boolean> {
+  const rows = await db
+    .update(shifts)
+    .set({ finishedAt: now })
+    .where(and(eq(shifts.id, shiftId), isNotNull(shifts.finishedAt), lt(shifts.finishedAt, cutoff)))
+    .returning({ id: shifts.id });
+  return rows.length > 0;
+}
+
 // ---- attestation claims (Neon HTTP has no transactions: single statements only) ----
 
 /** Atomically claim every unattested, unclaimed observed night of a shift. Each row goes to exactly one caller. */
-export async function claimShiftNights(db: Db, shiftId: number): Promise<NightRow[]> {
+export async function claimShiftNights(db: Db, shiftId: number, at: Date): Promise<NightRow[]> {
   return db
     .update(nights)
-    .set({ attestClaimedAt: sql`now()` })
+    .set({ attestClaimedAt: at })
     .where(and(
       eq(nights.shiftId, shiftId),
       eq(nights.observed, true),
@@ -264,13 +283,39 @@ export async function claimShiftNights(db: Db, shiftId: number): Promise<NightRo
     .returning();
 }
 
-/** Give claimed-but-unattested rows back so a later finalize can retry them. */
+/**
+ * Give claimed-but-unattested rows back (and forget any tx on them) so a later finalize can retry them. Only for rows
+ * whose batch was never broadcast, or whose tx reverted or was dropped.
+ */
 export async function releaseNightClaims(db: Db, ids: number[]): Promise<void> {
   if (ids.length === 0) return;
   await db
     .update(nights)
-    .set({ attestClaimedAt: null })
+    .set({ attestClaimedAt: null, attestTx: null })
     .where(and(inArray(nights.id, ids), isNull(nights.attestationUid)));
+}
+
+/** Record the broadcast tx on a claimed batch whose outcome is not known yet (reconciled from the receipt later). */
+export async function markNightsBroadcast(db: Db, ids: number[], tx: string): Promise<void> {
+  if (ids.length === 0) return;
+  await db
+    .update(nights)
+    .set({ attestTx: tx })
+    .where(and(inArray(nights.id, ids), isNull(nights.attestationUid), isNotNull(nights.attestClaimedAt)));
+}
+
+/** Claimed rows of a shift with a broadcast tx but no uid yet, in batch order (id ascending). */
+export async function listUnconfirmedBroadcasts(db: Db, shiftId: number): Promise<NightRow[]> {
+  return db
+    .select()
+    .from(nights)
+    .where(and(
+      eq(nights.shiftId, shiftId),
+      isNull(nights.attestationUid),
+      isNotNull(nights.attestClaimedAt),
+      isNotNull(nights.attestTx),
+    ))
+    .orderBy(asc(nights.id));
 }
 
 /** Write UIDs (and the tx) for claimed rows in one statement. Never overwrites an existing UID. */
