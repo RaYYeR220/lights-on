@@ -1,0 +1,109 @@
+{
+  "basis": "reconstructed history (git + Wayback), not attested",
+  "asOf": "2026-11-06",
+  "latestNight": "2026-11-06",
+  "window30From": "2026-10-08",
+  "window90From": "2026-08-09",
+  "resultsDate": "2026-07-30",
+  "daysSinceResults": 99,
+  "liveUpBasis": "liveUp = last HTTP probe (2026-11-05) answered 2xx/3xx; says nothing about whether the app works or is maintained",
+  "perProject": [
+    {
+      "name": "Onetoken",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": false,
+      "coverage": "none",
+      "active30": null,
+      "lastActivity": null
+    },
+    {
+      "name": "Agent Verse",
+      "liveUp": false,
+      "liveUpSource": "probe",
+      "hasPublicRepo": false,
+      "coverage": "none",
+      "active30": null,
+      "lastActivity": null
+    },
+    {
+      "name": "Corvo Edge",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": false,
+      "coverage": "none",
+      "active30": null,
+      "lastActivity": null
+    },
+    {
+      "name": "aHand",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": true,
+      "coverage": "history",
+      "active30": false,
+      "lastActivity": "2026-09-15"
+    },
+    {
+      "name": "AIDOL",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": false,
+      "coverage": "none",
+      "active30": null,
+      "lastActivity": null
+    },
+    {
+      "name": "EventChain",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": true,
+      "coverage": "history",
+      "active30": false,
+      "lastActivity": "2026-08-26"
+    },
+    {
+      "name": "exSafe",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": true,
+      "coverage": "history",
+      "active30": false,
+      "lastActivity": null
+    },
+    {
+      "name": "FutureRoots",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": false,
+      "coverage": "none",
+      "active30": null,
+      "lastActivity": null
+    },
+    {
+      "name": "Grayl AI",
+      "liveUp": true,
+      "liveUpSource": "probe",
+      "hasPublicRepo": true,
+      "coverage": "history",
+      "active30": false,
+      "lastActivity": null
+    },
+    {
+      "name": "Lineage",
+      "liveUp": false,
+      "liveUpSource": "probe",
+      "hasPublicRepo": false,
+      "coverage": "none",
+      "active30": null,
+      "lastActivity": null
+    }
+  ],
+  "summary": {
+    "finalists": 10,
+    "liveUp": 8,
+    "withHistory": 4,
+    "active30": 0,
+    "unknown": 6
+  }
+}

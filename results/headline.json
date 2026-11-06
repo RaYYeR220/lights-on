@@ -1,0 +1,67 @@
+{
+  "basis": "reconstructed history (git + Wayback), not attested",
+  "asOf": "2026-11-06",
+  "latestNight": "2026-11-06",
+  "window30From": "2026-10-08",
+  "window90From": "2026-08-09",
+  "candidates": [
+    {
+      "id": "hackathon-quiet",
+      "text": "30 of 33 hackathon builds on Base showed no code or deploy activity in the last 30 nights.",
+      "keys": [
+        "field.hackathon.quiet30",
+        "field.hackathon.withHistory"
+      ],
+      "values": {
+        "field.hackathon.quiet30": 30,
+        "field.hackathon.withHistory": 33
+      }
+    },
+    {
+      "id": "v01-still-lit",
+      "text": "Of the 10 Vibeathon 01 finalists, 0 showed code or deploy activity in the last 30 nights, 4 could be checked, and 6 have no public history to check (99 days after the results).",
+      "keys": [
+        "vibeathon01.summary.finalists",
+        "vibeathon01.summary.active30",
+        "vibeathon01.summary.withHistory",
+        "vibeathon01.summary.unknown",
+        "vibeathon01.daysSinceResults"
+      ],
+      "values": {
+        "vibeathon01.summary.finalists": 10,
+        "vibeathon01.summary.active30": 0,
+        "vibeathon01.summary.withHistory": 4,
+        "vibeathon01.summary.unknown": 6,
+        "vibeathon01.daysSinceResults": 99
+      }
+    },
+    {
+      "id": "commit-no-ship",
+      "text": "5 of 46 projects with history had commits in the last 30 nights but no detected deploy.",
+      "keys": [
+        "commitVsShip.commitsNoVerifiedShip",
+        "commitVsShip.withHistory"
+      ],
+      "values": {
+        "commitVsShip.commitsNoVerifiedShip": 5,
+        "commitVsShip.withHistory": 46
+      }
+    },
+    {
+      "id": "reference-vs-hackathon",
+      "text": "8 of 8 big reference apps were active in the last 30 nights, against 3 of 33 hackathon builds.",
+      "keys": [
+        "field.reference.active30",
+        "field.reference.withHistory",
+        "field.hackathon.active30",
+        "field.hackathon.withHistory"
+      ],
+      "values": {
+        "field.reference.active30": 8,
+        "field.reference.withHistory": 8,
+        "field.hackathon.active30": 3,
+        "field.hackathon.withHistory": 33
+      }
+    }
+  ]
+}

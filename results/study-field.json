@@ -1,0 +1,43 @@
+{
+  "basis": "reconstructed history (git + Wayback), not attested",
+  "asOf": "2026-11-06",
+  "latestNight": "2026-11-06",
+  "window30From": "2026-10-08",
+  "window90From": "2026-08-09",
+  "vibeathon01": {
+    "n": 10,
+    "withHistory": 4,
+    "active30": 0,
+    "shipped30": 0,
+    "quiet30": 4,
+    "medianDaysSinceActivity": 62,
+    "noActivityInHistory": 2
+  },
+  "hackathon": {
+    "n": 33,
+    "withHistory": 33,
+    "active30": 3,
+    "shipped30": 0,
+    "quiet30": 30,
+    "medianDaysSinceActivity": 23.5,
+    "noActivityInHistory": 29
+  },
+  "reference": {
+    "n": 8,
+    "withHistory": 8,
+    "active30": 8,
+    "shipped30": 6,
+    "quiet30": 0,
+    "medianDaysSinceActivity": 0,
+    "noActivityInHistory": 0
+  },
+  "vibestarter": {
+    "n": 1,
+    "withHistory": 1,
+    "active30": 0,
+    "shipped30": 0,
+    "quiet30": 1,
+    "medianDaysSinceActivity": null,
+    "noActivityInHistory": 1
+  }
+}
