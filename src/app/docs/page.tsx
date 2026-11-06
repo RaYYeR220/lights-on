@@ -113,7 +113,7 @@ export default function DocsPage() {
             </h2>
             <p>
               A Streamable HTTP MCP server at <code>{site}/api/mcp</code> (live) exposes the same reads as tools, and the
-              agent's ERC-8004 registration is at <code>{site}/.well-known/agent-registration.json</code>:
+              agent&apos;s ERC-8004 registration is at <code>{site}/.well-known/agent-registration.json</code>:
             </p>
             <ul>
               {TOOLS.map(([name, text]) => (

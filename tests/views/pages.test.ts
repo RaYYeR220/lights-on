@@ -4,7 +4,7 @@ import type { Db } from '@/lib/db';
 import { createNightlyShift, insertNight, saveEvidence, upsertProject } from '@/lib/db/queries';
 import { getProjectView } from '@/lib/views/project';
 import { getNightView, shiftTxs } from '@/lib/views/night';
-import { appendShiftTxs, updateShift } from '@/lib/db/queries';
+import { appendShiftTxs } from '@/lib/db/queries';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { NightShift } from '@/components/night/NightShift';
