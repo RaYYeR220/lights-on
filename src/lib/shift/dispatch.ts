@@ -60,6 +60,14 @@ export async function dispatchShift(now: Date, deps: DispatchDeps): Promise<{ sh
  * Fire-and-forget POST to our own /api/shift/run (fixed, operator-configured base URL, not user input; so plain
  * fetch, not safeFetch). Waits only for the 202 headers; the run works in `after()`.
  */
+/**
+ * Base URL for internal shift runs: INTERNAL_BASE_URL, else the public site, and only then the origin this request was
+ * routed to (which can be a protected per-deployment URL where every run would answer 401).
+ */
+export function internalBaseUrl(env: Record<string, string | undefined>, requestUrl: string): string {
+  return env.INTERNAL_BASE_URL || env.NEXT_PUBLIC_SITE_URL || new URL(requestUrl).origin;
+}
+
 export function httpTrigger(baseUrl: string, token: string, fetchImpl: typeof fetch = fetch): DispatchDeps['trigger'] {
   const url = `${baseUrl.replace(/\/+$/, '')}/api/shift/run`;
   return async (projectId, shiftId) => {
