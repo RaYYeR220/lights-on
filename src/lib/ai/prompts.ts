@@ -20,6 +20,7 @@ export const CLASSIFY_JSON_SCHEMA = {
   properties: {
     items: {
       type: 'array',
+      maxItems: 60,
       items: {
         type: 'object',
         additionalProperties: false,

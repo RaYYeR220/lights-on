@@ -24,12 +24,22 @@ const BANNED = /\b(scam|rug|dead|abandoned|fraud)\b/i;
 const MAX_SUMMARY = 280;
 const CLASSIFY_MAX_TOKENS = 700;
 const EXPLAIN_MAX_TOKENS = 300;
+const MAX_COMMIT_LINES = 60;
+const MAX_NOTABLE_CHARS = 120;
 
 const ClassifySchema = z.object({
   items: z.array(z.object({ ref: z.string(), kind: z.enum(['feature', 'fix', 'refactor', 'docs', 'deps', 'chore', 'unclear']) })).max(60),
   ai_substance: z.enum(['substantive', 'mostly_cosmetic', 'unclear']),
   notable: z.array(z.string()),
 });
+
+/** Cut to <= n chars at a word boundary (hard cut only if there is no space). */
+function cutAtWord(t: string, n: number): string {
+  if (t.length <= n) return t;
+  const cut = t.slice(0, n);
+  const sp = cut.lastIndexOf(' ');
+  return (sp > 0 && t[n] !== ' ' ? cut.slice(0, sp) : cut).trim();
+}
 
 /** Plain text only: markdown, HTML and URLs stripped, <= 280 chars, null if empty or a banned word appears. */
 export function sanitizeSummary(s: string): string | null {
@@ -39,11 +49,7 @@ export function sanitizeSummary(s: string): string | null {
   t = t.replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ');
   t = t.replace(/[*_#`]/g, '');
   t = t.replace(/\s+/g, ' ').trim();
-  if (t.length > MAX_SUMMARY) {
-    const cut = t.slice(0, MAX_SUMMARY);
-    const sp = cut.lastIndexOf(' ');
-    t = (sp > 0 && t[MAX_SUMMARY] !== ' ' ? cut.slice(0, sp) : cut).trim();
-  }
+  t = cutAtWord(t, MAX_SUMMARY); // cut BEFORE the banned-word check so a truncation can never create one
   if (!t || BANNED.test(t)) return null;
   return t;
 }
@@ -72,13 +78,15 @@ function buildInput(b: EvidenceBundle, d: Decision): { text: string; empty: bool
   let ci = 0;
   let ri = 0;
 
-  for (const c of repo?.commits ?? []) {
+  const allCommits = [...(repo?.commits ?? [])].sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
+  for (const c of allCommits.slice(0, MAX_COMMIT_LINES)) {
     count++;
     const ref = `c${++ci}`;
     refs.add(ref);
     const files = c.files && c.files.length ? ` files=[${c.files.slice(0, 30).map((f) => clip(f, 200)).join(', ')}]` : '';
     lines.push(`${ref} commit:${clip(c.sha, 12)} kind=${c.kind} "${clip(c.message.split('\n')[0] ?? '', 200)}"${files}`);
   }
+  if (allCommits.length > MAX_COMMIT_LINES) lines.push(`(+${allCommits.length - MAX_COMMIT_LINES} more commits not shown)`);
   for (const r of repo?.releases ?? []) {
     count++;
     const ref = `r${++ri}`;
@@ -141,9 +149,9 @@ export async function explainNight(b: EvidenceBundle, d: Decision, deps: Explain
   tokens += cls.tokens;
   const notable = cls.data.notable
     .map((n) => sanitizeSummary(n))
+    .map((n) => (n === null ? null : sanitizeSummary(cutAtWord(n, MAX_NOTABLE_CHARS)))) // truncate first, then sanitize the final string
     .filter((n): n is string => n !== null)
-    .slice(0, 5)
-    .map((n) => n.slice(0, 120).trim());
+    .slice(0, 5);
 
   // Only classifier output we can validate (our own refs, enum kinds) reaches the explain prompt, and only as counts.
   const seen = new Set<string>();

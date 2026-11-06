@@ -119,6 +119,32 @@ describe('explainNight', () => {
     expect(r.notable.every((n) => n.length <= 120)).toBe(true);
   });
 
+  it('notable cut inside "rugged" never yields a banned word', async () => {
+    const tricky = 'a'.repeat(116) + ' rugged tail';
+    const c = JSON.stringify({ items: [], ai_substance: 'unclear', notable: [tricky, 'ok note'] });
+    const f = seq(reply(c), reply('Code changed.'));
+    const b = bundle();
+    const r = await explainNight(b, decideStatus(b), deps(f));
+    expect(r.aiOk).toBe(true);
+    expect(r.notable.some((n) => /rug/i.test(n))).toBe(false);
+    expect(r.notable).toContain('ok note');
+    expect(r.notable[0]).toBe('a'.repeat(116));
+  });
+
+  it('75 commits: 60 refs plus a note, classification accepted', async () => {
+    const commits = Array.from({ length: 75 }, (_, i) => commit({ sha: `s${i}`, date: `2026-11-05T10:${String(i % 60).padStart(2, '0')}:00Z` }));
+    const items = Array.from({ length: 60 }, (_, i) => ({ ref: `c${i + 1}`, kind: 'feature' }));
+    const c = JSON.stringify({ items, ai_substance: 'substantive', notable: [] });
+    const f = seq(reply(c), reply('Many code changes.'));
+    const b = bundle(commits);
+    const r = await explainNight(b, decideStatus(b), deps(f));
+    expect(r.aiOk).toBe(true);
+    const user: string = JSON.parse(f.mock.calls[0][1].body).messages[1].content;
+    expect(user.match(/^c\d+ commit:/gm)).toHaveLength(60);
+    expect(user).toContain('(+15 more commits not shown)');
+    expect(JSON.parse(f.mock.calls[1][1].body).messages[1].content).toContain('feature=60');
+  });
+
   it('injected AI summary with banned word / link is dropped', async () => {
     const f = seq(reply(CLS), reply('This looks like a rug.'));
     const b = bundle();
