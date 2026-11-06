@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import s from "@/components/docs/docs.module.css";
+import { NONCE_TTL_MS, NOTE_MAX, WELL_KNOWN_PATH } from "@/lib/claim";
 
 export const metadata: Metadata = {
   title: "Docs · Lights On",
@@ -11,6 +12,7 @@ const TOC = [
   ["api", "REST API"],
   ["mcp", "MCP for agents"],
   ["verify", "Verify a night"],
+  ["claim", "For founders"],
 ] as const;
 
 interface Endpoint {
@@ -171,6 +173,38 @@ cast keccak "$(cat evidence.json)"   # prints <hash>`}</pre>
               The rules that turn evidence into a status are on the <Link className="ul" href="/methodology">methodology</Link>{" "}
               page.
             </p>
+          </section>
+
+          <section id="claim" className={s.sec} aria-labelledby="claim-h">
+            <h2 id="claim-h" className="h-sec">
+              For founders
+            </h2>
+            <p>
+              Claim your project at <code>/claim/&lt;slug&gt;</code> (the project page links it). You connect a wallet and sign
+              one message (Sign-In with Ethereum on Base, valid for {NONCE_TTL_MS / 60_000} minutes). The claim is accepted in one of two ways:
+            </p>
+            <ul>
+              <li>the wallet is the founder of the project&apos;s Vibestarter raise, or</li>
+              <li>
+                you publish the line the page gives you, <code>lights-on-claim=&lt;address&gt;:&lt;nonce&gt;</code>, at{" "}
+                <code>&lt;your live app&gt;{WELL_KNOWN_PATH}</code>.
+              </li>
+            </ul>
+            <p>Once claimed, the same wallet can:</p>
+            <ul>
+              <li>
+                <strong>Answer a night with a note</strong> of up to {NOTE_MAX} characters. Notes are shown as reported, next to
+                the verdict. They never change the status: only verified evidence does.
+              </li>
+              <li>
+                <strong>Draft a backer update</strong> from the project&apos;s recent nights. You get the text; posting it is up
+                to you.
+              </li>
+              <li>
+                <strong>Embed the badge</strong>, a live SVG of last night&apos;s status at <code>/badge/&lt;slug&gt;</code>:
+              </li>
+            </ul>
+            <pre className={s.pre}>{`[![Lights On](${site}/badge/<slug>)](${site}/p/<slug>)`}</pre>
           </section>
         </div>
       </div>

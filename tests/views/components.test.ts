@@ -112,4 +112,14 @@ describe('/docs', () => {
     for (const p of paths) expect(html).toContain(p.replace(/\{(\w+)\}/g, '{$1}'));
     for (const t of ['/api/mcp', '/llms.txt', '/api/openapi.json', 'POST /api/v1/watch', 'agent-registration.json']) expect(html).toContain(t);
   });
+
+  it('documents claiming, notes, drafts and the badge for founders', async () => {
+    const { default: DocsPage } = await import('@/app/docs/page');
+    const { WELL_KNOWN_PATH, NOTE_MAX } = await import('@/lib/claim');
+    const html = renderToStaticMarkup(DocsPage());
+    expect(html).toContain('id="claim"');
+    expect(html).toContain('href="#claim"');
+    for (const t of [WELL_KNOWN_PATH, 'lights-on-claim=', '/claim/&lt;slug&gt;', '/badge/&lt;slug&gt;', String(NOTE_MAX)]) expect(html).toContain(t);
+    expect(html).toMatch(/never change(s)? the status/i);
+  });
 });

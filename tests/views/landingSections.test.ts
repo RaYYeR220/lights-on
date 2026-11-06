@@ -84,7 +84,7 @@ describe('the landing sections below the fold', () => {
       expect(file, `${href}: no page or route under src/app`).not.toBeNull();
       if (anchor) expect(fs.readFileSync(file!, 'utf8'), `${href}: no id="${anchor}"`).toContain(`id="${anchor}"`);
     }
-    for (const want of ['/methodology#tiers', '/methodology#rules', '/methodology#attestation', '/night', '/b', '/p/corvo-edge', '/add', '/docs#mcp', '/docs#api']) {
+    for (const want of ['/methodology#tiers', '/methodology#rules', '/methodology#attestation', '/night', '/b', '/p/corvo-edge', '/add', '/docs#mcp', '/docs#api', '/docs#claim']) {
       expect(links).toContain(want);
     }
   });

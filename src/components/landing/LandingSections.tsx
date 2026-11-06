@@ -67,7 +67,7 @@ function cards(raise: Raise | null): { who: string; text: string; links: Go[] }[
       text: "Claim your project with a wallet signature, answer a quiet night with a note (shown as reported, never counted) and embed a live badge.",
       links: [
         { href: "/add", label: "Add your project" },
-        { href: "/methodology#tiers", label: "Reported vs verified" },
+        { href: "/docs#claim", label: "How claiming works" },
       ],
     },
     {
