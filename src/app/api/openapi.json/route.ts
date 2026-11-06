@@ -57,7 +57,7 @@ export function GET(): Response {
       '/api/v1/projects': {
         get: {
           operationId: 'listProjects',
-          summary: 'All watched projects with latest status and record',
+          summary: 'All listed projects with latest status and record (community-added watches are unlisted)',
           parameters: [{
             name: 'with', in: 'query', required: false, style: 'form', explode: false,
             schema: { type: 'array', items: { type: 'string', enum: ['lastNight', 'history'] } },
@@ -111,6 +111,7 @@ export function GET(): Response {
                   category: { type: ['string', 'null'] }, source: { type: 'string' }, bay: { type: ['integer', 'null'] },
                   liveUrl: { type: ['string', 'null'] }, repoHost: { type: ['string', 'null'] }, repo: { type: ['string', 'null'] },
                   contracts: { type: 'array', items: { type: 'object' } }, claimed: { type: 'boolean' },
+                  communityAdded: { const: true, description: 'Present for projects added via /watch: unlisted, served by slug only' },
                   status: nullableStatus, statusSource: { type: 'string', enum: ['reconstructed'] }, record,
                   latestNight: { oneOf: [night, { type: 'null' }], description: 'Observed night preferred' },
                   vibestarter: {
@@ -206,7 +207,7 @@ export function GET(): Response {
           operationId: 'watchProject',
           summary: 'Ask Lights On to watch a new project',
           description:
-            'Rate-limited: 3 per day per caller, 50 per day overall. The URL must answer. The project is created hidden and appears once its first check succeeds; if that check fails it stays hidden.',
+            'Rate-limited: 3 per day per caller, 50 per day overall. The URL must answer. The project is created hidden; after its first check succeeds it is reachable by slug (unlisted: never in /api/v1/projects). If the check fails it stays hidden, and watching the same URL again re-queues it.',
           requestBody: {
             required: true,
             content: json({
@@ -223,8 +224,8 @@ export function GET(): Response {
             202: {
               description: 'Accepted (status exists = this URL is already watched)',
               content: json({
-                type: 'object', required: ['slug', 'status'],
-                properties: { slug: { type: 'string' }, status: { type: 'string', enum: ['queued', 'exists'] } },
+                type: 'object', required: ['status'],
+                properties: { slug: { type: 'string', description: 'Omitted when a hidden project with this URL is re-queued' }, status: { type: 'string', enum: ['queued', 'exists'] } },
               }),
             },
             400: errorCodes('bad_request', 'invalid_url', 'invalid_repo', 'invalid_contract', 'blocked_url', 'unreachable'),

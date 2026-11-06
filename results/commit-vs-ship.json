@@ -1,0 +1,45 @@
+{
+  "basis": "reconstructed history (git + Wayback), not attested",
+  "asOf": "2026-11-06",
+  "latestNight": "2026-11-06",
+  "window30From": "2026-10-08",
+  "window90From": "2026-08-09",
+  "definition": {
+    "commitsNoVerifiedShip": "has building nights in the last 30 but zero shipped nights: commits seen, no deploy detected",
+    "shipNightsWithoutCodeCommits": "nights shipped by a deploy, release or contract deploy with no code commits that night (full 30-night windows only)",
+    "shipNoPublicRepo": "projects with shipped nights in the last 30 whose hasPublicRepo is false",
+    "windows": "only projects with >= 25 non-unavailable nights in the last 30 are counted; unavailable rows never count as coverage"
+  },
+  "withHistory": 46,
+  "partialWindow": 0,
+  "commitsNoVerifiedShip": [
+    "BasedBills",
+    "CoW Swap",
+    "Nouns Builder",
+    "Void Tactics",
+    "Vouch402"
+  ],
+  "shipNightsWithoutCodeCommits": [
+    {
+      "name": "Aave Interface",
+      "nights": 4
+    },
+    {
+      "name": "base.org",
+      "nights": 8
+    },
+    {
+      "name": "Revoke.cash",
+      "nights": 2
+    },
+    {
+      "name": "Safe{Wallet}",
+      "nights": 2
+    },
+    {
+      "name": "Uniswap Interface",
+      "nights": 4
+    }
+  ],
+  "shipNoPublicRepo": []
+}

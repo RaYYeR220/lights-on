@@ -30,9 +30,19 @@ export type Command =
 const StartToken = z.object({ a: z.string().regex(ADDRESS).optional(), p: z.string().regex(SLUG).optional() })
   .refine((v) => v.a !== undefined || v.p !== undefined);
 
-/** Deep-link token: base64url of {a?: address, p?: slug}. */
+const SHORT_ADDR = /^a_([0-9a-fA-F]{40})$/;
+const SHORT_SLUG = /^p_([a-z0-9-]{1,60})$/;
+
+/**
+ * Deep-link token. Telegram allows only 64 chars of [A-Za-z0-9_-] in a /start payload, so the short forms are
+ * `a_<40 hex>` (address, no 0x) and `p_<slug>`; the older base64url JSON {a?, p?} still parses.
+ */
 export function decodeStartToken(token: string): { address?: string; slug?: string } | null {
   if (!token || token.length > 400 || !/^[A-Za-z0-9_-]+$/.test(token)) return null;
+  const sa = SHORT_ADDR.exec(token);
+  if (sa) return { address: `0x${sa[1].toLowerCase()}` };
+  const sp = SHORT_SLUG.exec(token);
+  if (sp && SLUG.test(sp[1])) return { slug: sp[1] };
   try {
     const v = StartToken.safeParse(JSON.parse(Buffer.from(token, 'base64url').toString('utf8')));
     if (!v.success) return null;
@@ -43,6 +53,8 @@ export function decodeStartToken(token: string): { address?: string; slug?: stri
 }
 
 export function encodeStartToken(v: { a?: string; p?: string }): string {
+  if (v.a && !v.p && ADDRESS.test(v.a)) return `a_${v.a.slice(2).toLowerCase()}`;
+  if (v.p && !v.a && SLUG.test(v.p) && v.p.length <= 60) return `p_${v.p}`;
   return Buffer.from(JSON.stringify(v), 'utf8').toString('base64url');
 }
 

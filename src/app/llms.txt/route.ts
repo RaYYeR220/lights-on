@@ -31,7 +31,7 @@ ${RULES_TEXT.map((r, i) => `${i + 1}. ${r}`).join('\n')}
   - GET ${site}/api/v1/projects/{slug}/nights?from=yyyymmdd&to=yyyymmdd
   - GET ${site}/api/v1/evidence/{hash}   the canonical evidence bundle for a night
   - GET ${site}/api/v1/briefing/{address}   backer briefing for a wallet or .eth name
-  - POST ${site}/api/v1/watch { "liveUrl": "...", "repo": "owner/name", "contract": "0x..." }   rate-limited; the project appears after its first check succeeds
+  - POST ${site}/api/v1/watch { "liveUrl": "...", "repo": "owner/name", "contract": "0x..." }   rate-limited; after its first check succeeds the project is reachable by slug (unlisted)
 - Agent registration (ERC-8004): ${site}/.well-known/agent-registration.json
 
 ## Verify a night yourself

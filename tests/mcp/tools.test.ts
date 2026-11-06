@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { makeTestDb } from '../helpers/db';
 import type { Db } from '@/lib/db';
-import { insertNight, upsertProject, getProjectBySlug, setProjectHidden } from '@/lib/db/queries';
+import { insertNight, upsertProject, getProjectBySlug, setProjectHidden, moderateProject } from '@/lib/db/queries';
 import {
-  ToolError, listProjects, getProject, getNight, getProjectNights, isStillShipping, watchProject, parseRepoInput,
+  ToolError, getBriefing, listProjects, getProject, getNight, getProjectNights, isStillShipping, watchProject, parseRepoInput,
   resetWatchLimit, type WatchCtx,
 } from '@/lib/mcp/tools';
 import { schemaUid } from '@/lib/attest/eas';
@@ -25,7 +25,7 @@ async function seed() {
   const a = await upsertProject(db, { slug: 'revoke-cash', name: 'Revoke Cash', tagline: 'tl', source: 'base' });
   await night(a.id, '2026-11-04', 'building');
   await night(a.id, '2026-11-05', 'shipped', { evidenceHash: '0xabc', attestationUid: '0xuid', attestTx: '0xtx' });
-  const r = await upsertProject(db, { slug: 'recon', name: 'Recon', source: 'community' });
+  const r = await upsertProject(db, { slug: 'recon', name: 'Recon', source: 'vibeathon01' });
   await insertNight(db, { projectId: r.id, night: '2026-11-05', status: 'quiet', observed: false, signals: { reconstructed: true, reasons: ['none'] } });
   await upsertProject(db, { slug: 'secret', name: 'Secret', source: 'community', hidden: true });
   return { a, r };
@@ -148,6 +148,49 @@ describe('watchProject', () => {
     expect(scheduled).toHaveLength(1);
   });
 
+  it('watched projects are unlisted: absent from the list, served by slug with communityAdded', async () => {
+    const ctx = okCtx({ runFirst: async (p) => { await setProjectHidden(db, p.id, false); } });
+    const r = await watchProject(db, { liveUrl: 'https://listed.example' }, ctx);
+    await Promise.resolve();
+    const l = await listProjects(db, {}, NOW);
+    expect(l.projects.map((p) => p.slug)).not.toContain(r.slug);
+    const p = await getProject(db, r.slug!, NOW);
+    expect(p).toMatchObject({ slug: r.slug, communityAdded: true });
+    expect(await isStillShipping(db, r.slug!, NOW)).toMatchObject({ slug: r.slug, status: null });
+    // hidden (moderation) stays 404
+    await setProjectHidden(db, (await getProjectBySlug(db, r.slug!))!.id, true);
+    await expect(getProject(db, r.slug!, NOW)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('a hidden row with the same URL is re-queued without revealing its slug; a visible one is `exists`', async () => {
+    const calls: string[] = [];
+    const ctx = okCtx({ runFirst: async (p) => { calls.push(p.slug); } }); // first run "fails": stays hidden
+    const first = await watchProject(db, { liveUrl: 'https://retry.example/' }, ctx);
+    expect(first).toEqual({ slug: 'retry-example', status: 'queued' });
+    const again = await watchProject(db, { liveUrl: 'https://retry.example' }, okCtx({ ...ctx, headers: headers('2.2.2.2') }));
+    expect(again).toEqual({ status: 'queued' });
+    expect(calls).toEqual(['retry-example', 'retry-example']);
+    expect(await db.$count((await import('@/lib/db/schema')).projects)).toBe(1);
+    await setProjectHidden(db, (await getProjectBySlug(db, 'retry-example'))!.id, false);
+    expect(await watchProject(db, { liveUrl: 'https://retry.example' }, okCtx({ headers: headers('3.3.3.3') })))
+      .toEqual({ slug: 'retry-example', status: 'exists' });
+  });
+
+  it('a moderated row is not re-run or unhidden on resubmit; unhide restores added_by', async () => {
+    const calls: string[] = [];
+    const ctx = okCtx({ runFirst: async (p) => { calls.push(p.slug); } });
+    await watchProject(db, { liveUrl: 'https://mod.example' }, ctx);
+    const before = (await getProjectBySlug(db, 'mod-example'))!.addedBy!;
+    const hid = await moderateProject(db, 'mod-example', 'hide', new Date('2026-11-06T10:00:00.000Z'));
+    expect(hid).toMatchObject({ hidden: true, addedBy: `moderated:2026-11-06T10:00:00.000Z:${before}` });
+    const again = await watchProject(db, { liveUrl: 'https://mod.example' }, okCtx({ ...ctx, headers: headers('4.4.4.4') }));
+    expect(again).toEqual({ status: 'queued' });
+    expect(calls).toEqual(['mod-example']); // only the original run
+    expect((await getProjectBySlug(db, 'mod-example'))?.hidden).toBe(true);
+    const un = await moderateProject(db, 'mod-example', 'unhide');
+    expect(un).toMatchObject({ hidden: false, addedBy: before });
+  });
+
   it('a slug that matches an existing project is suffixed, never overwritten', async () => {
     await upsertProject(db, { slug: 'x-example', name: 'Curated', source: 'base', liveUrl: 'https://other.example' });
     const r = await watchProject(db, { liveUrl: 'https://x.example' }, okCtx());
@@ -162,6 +205,16 @@ describe('watchProject', () => {
     await watchProject(db, { liveUrl: 'https://s4.example' }, okCtx({ headers: headers('9.9.9.9') })); // another IP still fits
     for (let i = 0; i < 46; i++) await watchProject(db, { liveUrl: `https://g${i}.example` }, okCtx({ headers: headers(`8.8.${i}.1`) }));
     await expect(watchProject(db, { liveUrl: 'https://over.example' }, okCtx({ headers: headers('7.7.7.7') }))).rejects.toMatchObject({ code: 'rate_limited' });
+  });
+});
+
+describe('getBriefing limiter', () => {
+  it('applies even without headers (shared bucket)', async () => {
+    const { resetBriefingLimit } = await import('@/lib/briefingLimit');
+    resetBriefingLimit();
+    for (let i = 0; i < 30; i++) await getBriefing(db, 'nope').catch(() => undefined);
+    await expect(getBriefing(db, 'nope')).rejects.toMatchObject({ code: 'rate_limited', status: 429 });
+    resetBriefingLimit();
   });
 });
 

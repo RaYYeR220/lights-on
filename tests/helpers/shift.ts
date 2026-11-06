@@ -70,7 +70,7 @@ export function makeDeps(db: Db, over: Partial<ShiftDeps> = {}) {
 
 export function seedProject(db: Db, slug: string, extra: Partial<NewProject> = {}): Promise<ProjectRow> {
   return upsertProject(db, {
-    slug, name: slug, source: 'community',
+    slug, name: slug, source: 'vibeathon01',
     liveUrl: `https://${slug}.example`, repoHost: 'github', repo: `o/${slug}`,
     contracts: [{ chainId: 8453, address: '0xc0', role: 'app' }, { chainId: 8453, address: '0xd0', role: 'deployer' }],
     vibestarter: { campaignId: 'camp1', escrow: '0xe0', founderWallet: '0xf0' },

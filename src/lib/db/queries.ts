@@ -72,6 +72,13 @@ export async function listProjects(
   return db.select().from(projects).where(and(...conds)).orderBy(asc(projects.id));
 }
 
+/** Public tower/API list: visible projects minus community watches (those are unlisted, served by slug only). */
+export async function listListedProjects(db: Db): Promise<ProjectRow[]> {
+  return db.select().from(projects)
+    .where(and(eq(projects.hidden, false), sql`${projects.source} <> 'community'`))
+    .orderBy(asc(projects.id));
+}
+
 export async function insertNight(db: Db, row: NewNight): Promise<NightRow> {
   const [inserted] = await db.insert(nights).values(row).onConflictDoNothing().returning();
   if (!inserted) throw new DuplicateNight(row.projectId, row.night, row.observed ?? true);
@@ -569,4 +576,27 @@ export async function countWatches(db: Db, since: Date, addedBy?: string, before
   if (beforeId !== undefined) conds.push(lt(projects.id, beforeId));
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(projects).where(and(...conds));
   return r?.n ?? 0;
+}
+
+// ---- moderation (marker lives in added_by; no schema change) ----
+
+/** Unhide a watched project after its first run, but only while it is still a `watch:` row (never a moderated one). */
+export async function unhideWatchProject(db: Db, id: number): Promise<boolean> {
+  const r = await db.update(projects).set({ hidden: false })
+    .where(and(eq(projects.id, id), sql`${projects.addedBy} like 'watch:%'`)).returning({ id: projects.id });
+  return r.length > 0;
+}
+
+/** hide: hidden=true, added_by='moderated:<iso>:<previous>'. unhide: restore the previous added_by and show it. */
+export async function moderateProject(db: Db, slug: string, action: 'hide' | 'unhide', at: Date = new Date()): Promise<ProjectRow | null> {
+  const p = await getProjectBySlug(db, slug);
+  if (!p) return null;
+  if (action === 'hide') {
+    const addedBy = p.addedBy?.startsWith('moderated:') ? p.addedBy : `moderated:${at.toISOString()}:${p.addedBy ?? ''}`;
+    const [row] = await db.update(projects).set({ hidden: true, addedBy }).where(eq(projects.id, p.id)).returning();
+    return row ?? null;
+  }
+  const prev = p.addedBy?.startsWith('moderated:') ? p.addedBy.slice('moderated:'.length + 24 + 1) : p.addedBy; // ISO timestamp is 24 chars
+  const [row] = await db.update(projects).set({ hidden: false, addedBy: prev || null }).where(eq(projects.id, p.id)).returning();
+  return row ?? null;
 }

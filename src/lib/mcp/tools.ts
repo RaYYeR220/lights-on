@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Db } from '@/lib/db';
 import {
   countWatches, deleteProjectById, getNights, getNightStatuses, getProjectByLiveUrl, getProjectBySlug, getTranches,
-  insertProjectIfNew, listProjects as listProjectRows, setProjectHidden, type NightStatusRow,
+  insertProjectIfNew, listListedProjects, unhideWatchProject, type NightStatusRow,
 } from '@/lib/db/queries';
 import type { NightRow, ProjectRow } from '@/lib/db/schema';
 import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
@@ -95,7 +95,7 @@ function nightView(r: NightRow) {
 // ---- read tools ----
 
 export async function listProjects(db: Db, opts: { history?: boolean } = {}, now: Date = new Date()) {
-  const projs = await listProjectRows(db);
+  const projs = await listListedProjects(db); // community watches are unlisted
   const rows = await getNightStatuses(db, projs.map((p) => p.id), daysBack(now, RECORD_DAYS));
   const byProject = new Map<number, NightStatusRow[]>();
   for (const r of rows) {
@@ -163,6 +163,7 @@ export async function getProject(db: Db, slug: string, now: Date = new Date()) {
     liveUrl: p.liveUrl, repoHost: p.repoHost, repo: p.repo,
     contracts: p.contracts ?? [],
     claimed: !!p.claimVerifiedAt,
+    ...(p.source === 'community' ? { communityAdded: true as const } : {}),
     status: head?.status ?? null,
     ...(head && !observed ? { statusSource: 'reconstructed' as const } : {}),
     record,
@@ -211,10 +212,9 @@ export async function isStillShipping(db: Db, slug: string, now: Date = new Date
 }
 
 export async function getBriefing(db: Db, rawAddress: string, headers?: Headers) {
-  if (headers) {
-    const wait = checkBriefingLimit(headers);
-    if (wait !== null) throw new ToolError('rate_limited', 429, wait);
-  }
+  // Always limited: callers without a known address share the 'unknown' bucket.
+  const wait = checkBriefingLimit(headers ?? new Headers());
+  if (wait !== null) throw new ToolError('rate_limited', 429, wait);
   const raw = String(rawAddress ?? '').trim();
   const r = await resolveAddressInput(raw);
   if ('error' in r) throw new ToolError(r.error, r.status);
@@ -240,7 +240,7 @@ export interface WatchCtx {
   /** Runs the first shift after the response; defaults to next's `after()`. */
   schedule?: (p: Promise<unknown>) => void;
   /** Test seam for the first run itself. */
-  runFirst?: (project: ProjectRow) => Promise<void>;
+  runFirst?: (project: ProjectRow, ipHash: string) => Promise<void>;
 }
 
 // Per-instance guard on validation attempts (each one makes an outbound request); the durable daily caps are in the DB.
@@ -296,20 +296,29 @@ async function defaultSchedule(p: Promise<unknown>): Promise<void> {
   }
 }
 
-async function defaultRunFirst(db: Db, project: ProjectRow): Promise<void> {
-  const [{ makeShiftDeps }, { runProject, liveWindow }] = await Promise.all([import('@/lib/shift/deps'), import('@/lib/shift/run')]);
+async function defaultRunFirst(db: Db, project: ProjectRow, ipHash: string): Promise<void> {
+  const [{ makeShiftDeps }, { runProject, liveWindow }, { checkLiveLimit }] = await Promise.all([
+    import('@/lib/shift/deps'), import('@/lib/shift/run'), import('@/lib/shift/limits'),
+  ]);
+  // Never act on a row a moderator touched (or any non-watch row): re-read, then check the marker.
+  const fresh = await getProjectBySlug(db, project.slug);
+  if (!fresh || !fresh.addedBy?.startsWith('watch:')) return;
   const deps = makeShiftDeps(db, { kind: 'live' });
+  // Same admission as a public live run: daily live_runs counter, 1 per project per 5 min, 3 per requester per 10 min.
+  const limit = await checkLiveLimit(ipHash, project.id, deps);
+  if (!limit.ok) return; // stays hidden; a later watch of the same URL re-queues it
   const window = await liveWindow(db, project.id, deps.now());
-  const r = await runProject(project.id, 'live', window, deps);
-  if (r.status !== 'unavailable') await setProjectHidden(db, project.id, false);
+  const r = await runProject(project.id, 'live', window, deps, undefined, { liveRunId: limit.liveRunId, ipHash });
+  if (r.status !== 'unavailable') await unhideWatchProject(db, project.id); // no-op if moderated meanwhile
 }
 
 /**
  * Add a community project: validate (SSRF-guarded fetch), rate-limit (DB-backed: 3/day per IP hash, 50/day global,
  * counted on the projects table by `added_by = watch:<ip hash>`), insert hidden, then run the first shift after the
- * response. The project is unhidden only if that run finishes with a claim; otherwise it stays hidden.
+ * response. The project is unhidden only if that run finishes with a claim; otherwise it stays hidden. Community
+ * projects are unlisted (never in lists), served by slug only. A hidden row with the same URL is re-queued.
  */
-export async function watchProject(db: Db, input: unknown, ctx: WatchCtx): Promise<{ slug: string; status: 'queued' | 'exists' }> {
+export async function watchProject(db: Db, input: unknown, ctx: WatchCtx): Promise<{ slug?: string; status: 'queued' | 'exists' }> {
   const secret = process.env.INTERNAL_RUN_TOKEN;
   if (!secret) throw new ToolError('misconfigured', 503);
   const now = ctx.now?.() ?? new Date();
@@ -324,6 +333,7 @@ export async function watchProject(db: Db, input: unknown, ctx: WatchCtx): Promi
   try { url = new URL(liveUrl); } catch { throw new ToolError('invalid_url', 400); }
   if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new ToolError('invalid_url', 400);
   url.hash = '';
+  if (url.pathname.length > 1 && url.pathname.endsWith('/')) url.pathname = url.pathname.replace(/\/+$/, '');
   const normalized = url.toString();
 
   let repoRef: { host: 'github' | 'gitlab'; repo: string } | null = null;
@@ -336,9 +346,6 @@ export async function watchProject(db: Db, input: unknown, ctx: WatchCtx): Promi
     if (!isAddress(contract, { strict: false })) throw new ToolError('invalid_contract', 400);
     contractAddr = getAddress(contract);
   }
-
-  const existing = await getProjectByLiveUrl(db, normalized);
-  if (existing) return { slug: existing.slug, status: 'exists' };
 
   // The site must answer (any HTTP response below 500; 401/403/429 mean "blocking us", still alive).
   try {
@@ -356,17 +363,40 @@ export async function watchProject(db: Db, input: unknown, ctx: WatchCtx): Promi
     || (await countWatches(db, dayStart, undefined, beforeId)) >= WATCH_LIMITS.globalPerDay;
   if (await over()) throw new ToolError('rate_limited', 429, untilUtcMidnight(now));
 
+  // Lookup only after validation and caps. A visible project is just reported; a hidden one (failed first run) is
+  // re-queued under the same row and its slug is not revealed.
+  const requeue = async (): Promise<{ slug?: string; status: 'queued' | 'exists' }> => {
+    const existing = await getProjectByLiveUrl(db, normalized);
+    if (!existing) throw new ToolError('internal', 500);
+    if (!existing.hidden) return { slug: existing.slug, status: 'exists' };
+    if (existing.source === 'community' && existing.addedBy?.startsWith('watch:')) {
+      const job = (ctx.runFirst ? ctx.runFirst(existing, ipHash) : defaultRunFirst(db, existing, ipHash)).catch((e) => {
+        console.error('watch re-run failed:', safeErrorCode(e));
+      });
+      if (ctx.schedule) ctx.schedule(job);
+      else await defaultSchedule(job);
+    }
+    return { status: 'queued' };
+  };
+  if (await getProjectByLiveUrl(db, normalized)) return requeue();
+
   // Reserve-then-verify: a concurrent loser deletes its row.
   const base = slugFromUrl(url);
   let row: ProjectRow | null = null;
   for (let i = 1; i <= 20 && !row; i++) {
     const slug = i === 1 ? base : `${base.slice(0, 75)}-${i}`;
-    row = await insertProjectIfNew(db, {
+    try {
+      row = await insertProjectIfNew(db, {
       slug, name: url.hostname.replace(/^www\./, ''), tagline: null, source: 'community', liveUrl: normalized,
       repoHost: repoRef?.host ?? null, repo: repoRef?.repo ?? null,
       contracts: contractAddr ? [{ chainId: 8453, address: contractAddr, role: 'watched' }] : null,
       addedBy: marker, hidden: true, createdAt: now,
-    });
+      });
+    } catch (e) {
+      const code = (e as { code?: string })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
+      if (code === '23505') return requeue(); // another writer got this URL first
+      throw e;
+    }
   }
   if (!row) throw new ToolError('internal', 500);
   if (await over(row.id)) {
@@ -375,7 +405,7 @@ export async function watchProject(db: Db, input: unknown, ctx: WatchCtx): Promi
   }
 
   const created = row;
-  const job = (ctx.runFirst ? ctx.runFirst(created) : defaultRunFirst(db, created)).catch((e) => {
+  const job = (ctx.runFirst ? ctx.runFirst(created, ipHash) : defaultRunFirst(db, created, ipHash)).catch((e) => {
     console.error('watch first run failed:', safeErrorCode(e)); // project stays hidden
   });
   if (ctx.schedule) ctx.schedule(job);

@@ -1,7 +1,7 @@
 import { erc20Abi, formatUnits, getAddress, isAddress, type Address } from 'viem';
 import type { Db } from '@/lib/db';
 import type { ProjectRow } from '@/lib/db/schema';
-import { listProjects } from '@/lib/db/queries';
+import { listListedProjects } from '@/lib/db/queries';
 import { getBaseClient } from '@/lib/adapters/baseRpc';
 import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
 import { vibestarterContributionsAbi } from '@/lib/adapters/vibestarterAbi';
@@ -154,7 +154,7 @@ export async function discoverBacker(address: string, deps: BackerDeps): Promise
   const addr = parseAddress(address);
   if (!addr) return { projects: [], degraded: false };
   const wallet = addr.toLowerCase();
-  const projs = deps.projects ?? (await listProjects(deps.db));
+  const projs = deps.projects ?? (await listListedProjects(deps.db));
   const out = new Map<number, BackerProject>();
   let degraded = false;
 
@@ -249,7 +249,7 @@ export async function resolveBackerProjectIds(addresses: string[], deps: BackerD
   const ids = new Set<number>();
   const valid = [...new Set(addresses)].filter((a) => parseAddress(a));
   if (valid.length === 0) return [];
-  const shared = { ...deps, projects: deps.projects ?? (await listProjects(deps.db)) }; // one project list for every address
+  const shared = { ...deps, projects: deps.projects ?? (await listListedProjects(deps.db)) }; // one project list for every address
   for (const a of valid) {
     try {
       for (const p of (await discoverBacker(a, shared)).projects) ids.add(p.id);

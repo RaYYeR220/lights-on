@@ -25,6 +25,10 @@ async function run(fn: () => Promise<unknown>) {
   }
 }
 
+/** Caller headers: the request carried by mcp-handler's context first, ALS as fallback, never undefined. */
+const headersOf = (ctx: unknown): Headers =>
+  (ctx as { http?: { req?: Request } } | undefined)?.http?.req?.headers ?? requestHeaders.getStore() ?? new Headers();
+
 const slug = z.string().min(1).max(80).describe('Project slug, e.g. "revoke-cash"');
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
@@ -63,14 +67,14 @@ const handler = createMcpHandler(
       description: 'Morning briefing for a wallet address or .eth name: the watched projects it backs or holds, and what changed.',
       inputSchema: z.object({ address: z.string().min(1).max(200).describe('0x address or ENS name') }),
       annotations: READ_ONLY,
-    }, ({ address }) => run(async () => getBriefing(await getDb(), address, requestHeaders.getStore())));
+    }, ({ address }, ctx) => run(async () => getBriefing(await getDb(), address, headersOf(ctx))));
 
     server.registerTool('watch_project', {
       title: 'Watch a project',
-      description: 'Ask Lights On to watch a new project. Rate-limited (3 per day per caller, 50 per day overall). Starts hidden and appears once its first check succeeds.',
+      description: 'Ask Lights On to watch a new project. Rate-limited (3 per day per caller, 50 per day overall). The project is unlisted: reachable by slug once its first check succeeds, never in list_projects.',
       inputSchema: watchInput,
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: true },
-    }, (args) => run(async () => watchProject(await getDb(), args, { headers: requestHeaders.getStore() ?? new Headers() })));
+    }, (args, ctx) => run(async () => watchProject(await getDb(), args, { headers: headersOf(ctx) })));
   },
   {
     serverInfo: { name: 'lights-on', version: '1.0.0' },
