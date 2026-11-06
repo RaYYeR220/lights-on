@@ -298,7 +298,7 @@ export async function releaseNightClaims(db: Db, ids: number[], claimId: string,
   if (ids.length === 0) return;
   await db
     .update(nights)
-    .set({ attestClaimedAt: null, attestClaimId: null, attestTx: null, attestNonce: null })
+    .set({ attestClaimedAt: null, attestClaimId: null, attestTx: null, attestNonce: null, attestSender: null })
     .where(and(
       inArray(nights.id, ids),
       isNull(nights.attestationUid),
@@ -307,12 +307,21 @@ export async function releaseNightClaims(db: Db, ids: number[], claimId: string,
     ));
 }
 
-/** Record the broadcast tx (+ nonce) on our claimed batch whose outcome is not known yet. */
-export async function markNightsBroadcast(db: Db, ids: number[], claimId: string, tx: string, nonce: number | null): Promise<void> {
+/**
+ * Record the signed tx (+ nonce + sender) on our claimed batch, before it is sent or while its outcome is unknown.
+ * A null nonce/sender never erases one already recorded.
+ */
+export async function markNightsBroadcast(
+  db: Db, ids: number[], claimId: string, tx: string, nonce: number | null, sender: string | null = null,
+): Promise<void> {
   if (ids.length === 0) return;
   await db
     .update(nights)
-    .set({ attestTx: tx, attestNonce: nonce })
+    .set({
+      attestTx: tx,
+      attestNonce: sql`COALESCE(${nonce}::int, ${nights.attestNonce})`,
+      attestSender: sql`COALESCE(${sender}::text, ${nights.attestSender})`,
+    })
     .where(and(inArray(nights.id, ids), isNull(nights.attestationUid), eq(nights.attestClaimId, claimId)));
 }
 
@@ -332,18 +341,20 @@ export async function listUnconfirmedBroadcasts(db: Db, shiftId: number): Promis
 
 /**
  * Write UIDs (and the tx) for rows held under `claimId`, in one statement. Never overwrites a UID, and never writes
- * over a different tx than the one these uids came from.
+ * over a different tx than the one these uids came from. Returns how many rows were actually written.
  */
 export async function setNightAttestations(
   db: Db, rows: { id: number; uid: string }[], tx: string, claimId: string,
-): Promise<void> {
-  if (rows.length === 0) return;
+): Promise<number> {
+  if (rows.length === 0) return 0;
   const values = sql.join(rows.map((r) => sql`(${r.id}::int, ${r.uid}::text)`), sql`, `);
-  await db.execute(sql`
+  const res = await db.execute(sql`
     UPDATE nights AS n SET attestation_uid = v.uid, attest_tx = ${tx}
     FROM (VALUES ${values}) AS v(id, uid)
     WHERE n.id = v.id AND n.attestation_uid IS NULL AND n.attest_claim_id = ${claimId}
-      AND (n.attest_tx IS NULL OR n.attest_tx = ${tx})`);
+      AND (n.attest_tx IS NULL OR n.attest_tx = ${tx})
+    RETURNING n.id`);
+  return (res as unknown as { rows: unknown[] }).rows.length;
 }
 
 export async function countUnattested(db: Db, shiftId: number): Promise<number> {

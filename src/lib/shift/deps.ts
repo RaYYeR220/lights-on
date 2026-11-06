@@ -1,4 +1,4 @@
-import type { Hex } from 'viem';
+import type { Address, Hex } from 'viem';
 import type { Db } from '@/lib/db';
 import {
   bumpBudget, bumpShiftBudget, releaseBudget, releaseShiftBudget, type BudgetField,
@@ -41,8 +41,8 @@ export interface ShiftDeps {
   adapters?: Partial<Adapters>;
   /** Watcher wallet + read client; wallet null -> attestation `disabled`. */
   signer?: { wallet: AttestDeps['wallet']; publicClient: AnyPublicClient };
-  /** Settles a broadcast tx from its receipt and nonce (defaults to attestationStatus on signer.publicClient). */
-  attestReceipt?: (txHash: Hex, nonce: number | null) => Promise<AttestReceipt>;
+  /** Settles a broadcast tx from its receipt, nonce and recorded sender (defaults to attestationStatus on signer.publicClient). */
+  attestReceipt?: (txHash: Hex, nonce: number | null, sender: Address | null) => Promise<AttestReceipt>;
   /** Base RPC for chain/vibestarter adapters (defaults to getBaseClient() inside them). */
   rpc?: RpcLike;
   githubToken?: string;
@@ -79,11 +79,11 @@ export function attestDepsFor(
   };
 }
 
-export function receiptOf(deps: ShiftDeps): ((txHash: Hex, nonce: number | null) => Promise<AttestReceipt>) | null {
+/** The nonce is checked against the sender recorded with the tx, never against whatever key is configured now. */
+export function receiptOf(deps: ShiftDeps): ((txHash: Hex, nonce: number | null, sender: Address | null) => Promise<AttestReceipt>) | null {
   if (deps.attestReceipt) return deps.attestReceipt;
   const pc = deps.signer?.publicClient;
-  const sender = deps.signer?.wallet?.account.address ?? null;
-  return pc ? (tx, nonce) => attestationStatus(tx, nonce, sender, pc) : null;
+  return pc ? (tx, nonce, sender) => attestationStatus(tx, nonce, sender, pc) : null;
 }
 
 export const DEFAULT_SITE_URL = 'https://lights-on.vercel.app';

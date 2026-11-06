@@ -1,6 +1,6 @@
 import {
-  decodeAbiParameters, encodeAbiParameters, encodePacked, keccak256, parseEventLogs, parseAbiParameters, zeroAddress,
-  type Account, type Address, type Chain, type Hex, type Transport, type WalletClient,
+  decodeAbiParameters, encodeAbiParameters, encodeFunctionData, encodePacked, keccak256, parseEventLogs, parseAbiParameters,
+  zeroAddress, type Account, type Address, type Chain, type Hex, type Transport, type WalletClient,
 } from 'viem';
 import { safeErrorCode } from '@/lib/net/redact';
 import { EAS_ADDRESS, easAbi } from './abi';
@@ -15,9 +15,9 @@ export interface NightAttestation {
 }
 
 /**
- * Not attested. `txHash` is set whenever the tx WAS broadcast (receipt wait failed, reverted, or logs unreadable):
- * its fate must then be settled from the receipt, never by sending the same attestations again.
- * `error: 'reverted'` with a txHash = confirmed revert (receipt status reverted).
+ * Not attested. `txHash` is set whenever a signed tx was handed to the network (send error, receipt wait failed,
+ * reverted, replaced, or logs unreadable): its fate must then be settled from the chain, never by sending the same
+ * attestations again. `error: 'reverted'` with a txHash = confirmed revert (receipt status reverted).
  */
 export type Skipped = { skipped: 'gas_cap' | 'disabled' | 'error'; error?: string; txHash?: Hex; nonce?: number };
 
@@ -33,10 +33,10 @@ export interface AttestDeps {
    */
   release?: (weiAmount: bigint) => Promise<void>;
   /**
-   * Called right after broadcast, before the receipt wait, with the hash and the nonce it was signed with, so the
-   * caller can persist both. Errors are ignored.
+   * Called after local signing and BEFORE the raw tx is sent, with its hash, nonce and sender, so the caller can
+   * persist them first. If it throws, nothing is sent (the attestation is skipped, the reservation refunded).
    */
-  onBroadcast?: (txHash: Hex, nonce: number) => Promise<void>;
+  onBroadcast?: (txHash: Hex, nonce: number, sender: Address) => Promise<void>;
   /** Receipt wait; default RECEIPT_TIMEOUT_MS. */
   receiptTimeoutMs?: number;
 }
@@ -75,16 +75,21 @@ function requestData(n: NightAttestation) {
 
 type Logs = readonly { address: string; topics: readonly Hex[]; data: Hex }[];
 
-/** Estimate worst-case cost, reserve it against the cap, then send. Never throws; after broadcast always reports txHash. */
+/**
+ * Estimate worst-case cost, reserve it against the cap, sign locally with an explicit nonce, persist the hash
+ * (onBroadcast), then send the raw tx. Never throws. From the moment the hash is persisted every outcome carries it
+ * and the reservation is kept, because the node may have accepted the tx even if the send call failed.
+ */
 async function send(
   call: { functionName: 'attest' | 'multiAttest'; args: unknown },
   deps: AttestDeps,
 ): Promise<{ txHash: Hex; nonce: number; logs: Logs } | Skipped> {
   const { wallet, publicClient } = deps;
   if (!wallet) return { skipped: 'disabled' };
-  let txHash: Hex | undefined;
+  let sent: Hex | undefined;
   let nonce: number | undefined;
   try {
+    const sender = wallet.account.address;
     const base = { address: EAS_ADDRESS, abi: easAbi, account: wallet.account, ...call } as never;
     const estimate = await publicClient.estimateContractGas(base);
     const gas = (estimate * 12n) / 10n;
@@ -93,23 +98,43 @@ async function send(
     const tipEstimate = await publicClient.estimateMaxPriorityFeePerGas();
     const { maxFeePerGas, maxPriorityFeePerGas } = computeFees(block.baseFeePerGas, tipEstimate);
     // Explicit nonce, so a tx that is never found can later be proven unmineable (a later tx consumed its nonce).
-    const n = await publicClient.getTransactionCount({ address: wallet.account.address, blockTag: 'pending' });
+    const n = await publicClient.getTransactionCount({ address: sender, blockTag: 'pending' });
     const reserved = gas * maxFeePerGas;
     if (!(await deps.budget(reserved))) return { skipped: 'gas_cap' };
+    let serialized: Hex;
+    let hash: Hex;
+    let signed = false;
     try {
-      txHash = await wallet.writeContract({ ...(base as object), chain: wallet.chain, gas, maxFeePerGas, maxPriorityFeePerGas, nonce: n } as never);
+      serialized = await wallet.signTransaction({
+        account: wallet.account,
+        chain: wallet.chain,
+        to: EAS_ADDRESS,
+        data: encodeFunctionData({ abi: easAbi, ...call } as never),
+        value: 0n,
+        gas,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+        nonce: n,
+        type: 'eip1559',
+      } as never);
+      signed = true;
+      hash = keccak256(serialized);
+      await deps.onBroadcast?.(hash, n, sender); // persisted BEFORE it can reach any node
     } catch (e) {
-      await deps.release?.(reserved).catch(() => undefined); // never broadcast: refund
-      return { skipped: 'error', error: safeErrorCode(e) };
+      await deps.release?.(reserved).catch(() => undefined); // nothing was sent: refund
+      return { skipped: 'error', error: signed ? 'persist_failed' : safeErrorCode(e) };
     }
-    const sent = txHash;
+    sent = hash;
     nonce = n;
-    await deps.onBroadcast?.(sent, n).catch(() => undefined);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: sent, timeout: deps.receiptTimeoutMs ?? RECEIPT_TIMEOUT_MS });
-    if (receipt.status !== 'success') return { skipped: 'error', error: 'reverted', txHash: sent, nonce: n };
-    return { txHash: sent, nonce: n, logs: receipt.logs as unknown as Logs };
+    // Any failure from here on is post-broadcast from our side: keep the reservation and report the hash.
+    await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: deps.receiptTimeoutMs ?? RECEIPT_TIMEOUT_MS });
+    // viem follows replacements and may hand back ANOTHER tx's receipt for our nonce: that is not ours.
+    if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) return { skipped: 'error', error: 'replaced', txHash: hash, nonce: n };
+    if (receipt.status !== 'success') return { skipped: 'error', error: 'reverted', txHash: hash, nonce: n };
+    return { txHash: hash, nonce: n, logs: receipt.logs as unknown as Logs };
   } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e), ...(txHash ? { txHash } : {}), ...(nonce !== undefined ? { nonce } : {}) };
+    return { skipped: 'error', error: safeErrorCode(e), ...(sent ? { txHash: sent } : {}), ...(nonce !== undefined ? { nonce } : {}) };
   }
 }
 
@@ -147,8 +172,8 @@ export async function attestMany(ns: NightAttestation[], deps: AttestDeps): Prom
  * Fate of a broadcast attestation tx.
  *  success  - mined; uids of the EAS `Attested` logs in log order (= request order for multiAttest)
  *  reverted - mined, reverted: nothing attested
- *  dropped  - no receipt AND the sender's mined tx count is past the tx nonce: another tx used the nonce, ours can
- *             never mine
+ *  dropped  - no receipt, the sender's mined tx count is past the tx nonce, and the node does not know the tx:
+ *             another tx used the nonce, ours can never mine
  *  pending  - no receipt and the nonce is still open (or unknown): may still mine, so keep waiting
  *  error    - RPC failure: decide nothing
  */
@@ -159,20 +184,22 @@ export type AttestReceipt =
   | { status: 'dropped' }
   | { status: 'error'; error: string };
 
-const notFound = (e: unknown) => {
-  const named = (x: unknown) => (x as { name?: unknown } | null)?.name === 'TransactionReceiptNotFoundError';
+const isNamed = (e: unknown, name: string) => {
+  const named = (x: unknown) => (x as { name?: unknown } | null)?.name === name;
   return named(e) || named((e as { cause?: unknown } | null)?.cause);
 };
 
 /**
- * Settle a broadcast tx. The sender's `latest` tx count is read BEFORE the receipt: if the nonce was already consumed
- * then and the receipt is still missing afterwards, the consuming tx was not ours. Never throws.
+ * Settle a broadcast tx (sender = the address recorded with it). The sender's `latest` tx count is read BEFORE the
+ * receipt; `dropped` needs all three: the nonce was already consumed then, the receipt is still missing, and the
+ * node does not know the tx either (getTransaction not found), which guards against one lagging node of a
+ * load-balanced RPC. Anything less certain is `pending`. Never throws.
  */
 export async function attestationStatus(
   txHash: Hex,
   nonce: number | null,
   sender: Address | null,
-  publicClient: Pick<AnyPublicClient, 'getTransactionReceipt' | 'getTransactionCount'>,
+  publicClient: Pick<AnyPublicClient, 'getTransactionReceipt' | 'getTransactionCount' | 'getTransaction'>,
 ): Promise<AttestReceipt> {
   try {
     const mined = nonce !== null && sender ? await publicClient.getTransactionCount({ address: sender, blockTag: 'latest' }) : null;
@@ -181,8 +208,14 @@ export async function attestationStatus(
       if (receipt.status !== 'success') return { status: 'reverted' };
       return { status: 'success', uids: uidsFrom(receipt.logs as unknown as Logs) };
     } catch (e) {
-      if (!notFound(e)) throw e;
-      return mined !== null && nonce !== null && mined > nonce ? { status: 'dropped' } : { status: 'pending' };
+      if (!isNamed(e, 'TransactionReceiptNotFoundError')) throw e;
+      if (mined === null || nonce === null || !(mined > nonce)) return { status: 'pending' };
+      try {
+        const tx = await publicClient.getTransaction({ hash: txHash });
+        return tx ? { status: 'pending' } : { status: 'dropped' };
+      } catch (e2) {
+        return isNamed(e2, 'TransactionNotFoundError') ? { status: 'dropped' } : { status: 'pending' };
+      }
     }
   } catch (e) {
     return { status: 'error', error: safeErrorCode(e) };

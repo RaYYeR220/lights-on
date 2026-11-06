@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { encodeAbiParameters, encodeEventTopics, keccak256, toBytes, zeroAddress, type Hex } from 'viem';
+import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, keccak256, toBytes, zeroAddress, type Hex } from 'viem';
 import {
   attestMany, attestOne, attestationStatus, computeFees, decodeNight, encodeNight, schemaUid, SCHEMA, type AttestDeps, type NightAttestation,
 } from '@/lib/attest/eas';
@@ -10,10 +10,21 @@ const night = (i = 0): NightAttestation => ({
   evidenceHash: keccak256(toBytes(`ev-${i}`)), agentId: 42n, evidenceURI: 'https://example.test/api/v1/evidence/0xabc',
 });
 
-function deps(over: { budget?: (w: bigint) => Promise<boolean>; wallet?: null; estimateErr?: Error; baseFee?: bigint; tip?: bigint; writeErr?: Error } = {}) {
-  const writeContract = vi.fn(async (_a?: unknown) => {
-    if (over.writeErr) throw over.writeErr;
-    return ('0x' + '11'.repeat(32)) as Hex;
+/** What the fake wallet "signs"; the tx hash is keccak256 of it, computed locally before anything is sent. */
+const SERIALIZED = ('0x02' + 'ab'.repeat(100)) as Hex;
+const SENT = keccak256(SERIALIZED);
+
+function deps(over: {
+  budget?: (w: bigint) => Promise<boolean>; wallet?: null; estimateErr?: Error; baseFee?: bigint; tip?: bigint;
+  signErr?: Error; sendErr?: Error;
+} = {}) {
+  const signTransaction = vi.fn(async (_a?: unknown) => {
+    if (over.signErr) throw over.signErr;
+    return SERIALIZED;
+  });
+  const sendRawTransaction = vi.fn(async () => {
+    if (over.sendErr) throw over.sendErr;
+    return SENT;
   });
   const publicClient = {
     estimateContractGas: vi.fn(async () => {
@@ -25,10 +36,10 @@ function deps(over: { budget?: (w: bigint) => Promise<boolean>; wallet?: null; e
     getTransactionCount: vi.fn(async () => 7),
     waitForTransactionReceipt: vi.fn(),
   };
-  const wallet = over.wallet === null ? null : ({ account: { address: zeroAddress }, chain: undefined, writeContract } as never);
+  const wallet = over.wallet === null ? null : ({ account: { address: zeroAddress }, chain: undefined, signTransaction, sendRawTransaction } as never);
   const budget = vi.fn(over.budget ?? (async () => true));
   const release = vi.fn(async (_w: bigint) => undefined);
-  return { d: { wallet, publicClient, budget, release } as unknown as AttestDeps, writeContract, publicClient, budget, release };
+  return { d: { wallet, publicClient, budget, release } as unknown as AttestDeps, signTransaction, sendRawTransaction, publicClient, budget, release };
 }
 
 describe('eas encoding', () => {
@@ -47,11 +58,12 @@ describe('eas encoding', () => {
 });
 
 describe('attest gas cap', () => {
-  it('over the cap: skipped gas_cap and NO tx sent', async () => {
-    const { d, writeContract, budget } = deps({ budget: async () => false });
+  it('over the cap: skipped gas_cap and NO tx signed or sent', async () => {
+    const { d, signTransaction, sendRawTransaction, budget } = deps({ budget: async () => false });
     expect(await attestOne(night(), d)).toEqual({ skipped: 'gas_cap' });
     expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'gas_cap' });
-    expect(writeContract).not.toHaveBeenCalled();
+    expect(signTransaction).not.toHaveBeenCalled();
+    expect(sendRawTransaction).not.toHaveBeenCalled();
     expect(budget).toHaveBeenCalledWith(240_000n * (2n * 1_000_000n + 1_000_000n)); // 1.2x gas, 2x baseFee + tip
   });
 
@@ -62,34 +74,35 @@ describe('attest gas cap', () => {
   });
 
   it('estimate failure: skipped error with a redacted code, never throws', async () => {
-    const { d, writeContract } = deps({ estimateErr: new Error('boom https://rpc.example/?key=SECRET') });
+    const { d, sendRawTransaction } = deps({ estimateErr: new Error('boom https://rpc.example/?key=SECRET') });
     const r = await attestMany([night()], d);
     expect(r).toEqual({ skipped: 'error', error: 'error' });
     expect(JSON.stringify(r)).not.toContain('SECRET');
-    expect(writeContract).not.toHaveBeenCalled();
+    expect(sendRawTransaction).not.toHaveBeenCalled();
   });
 
   it('empty batch is not sent', async () => {
-    const { d, writeContract } = deps();
+    const { d, signTransaction } = deps();
     expect(await attestMany([], d)).toMatchObject({ skipped: 'error' });
-    expect(writeContract).not.toHaveBeenCalled();
+    expect(signTransaction).not.toHaveBeenCalled();
   });
 });
 
-describe('explicit fees', () => {
+describe('explicit fees, local signing', () => {
   it('clamps an RPC tip of 1 gwei down to 0.01 gwei and floors tiny tips', () => {
     expect(computeFees(5_000_000n, 1_000_000_000n)).toEqual({ maxPriorityFeePerGas: 10_000_000n, maxFeePerGas: 20_000_000n });
     expect(computeFees(5_000_000n, 1n).maxPriorityFeePerGas).toBe(1_000_000n);
   });
 
-  it('passes gas x1.2 and both fee fields to writeContract; tip clamped', async () => {
-    const { d, writeContract } = deps({ baseFee: 5_000_000n, tip: 1_000_000_000n });
-    await attestOne(night(), d); // receipt wait is unmocked -> error after broadcast, fine
-    const arg = writeContract.mock.calls[0]![0] as { gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; nonce: number };
-    expect(arg.gas).toBe(240_000n);
-    expect(arg.nonce).toBe(7); // explicit, from the pending count
-    expect(arg.maxPriorityFeePerGas).toBe(10_000_000n);
-    expect(arg.maxFeePerGas).toBe(20_000_000n);
+  it('signs an EIP-1559 tx to EAS with gas x1.2, both fee fields, the pending nonce and attest calldata', async () => {
+    const { d, signTransaction, sendRawTransaction } = deps({ baseFee: 5_000_000n, tip: 1_000_000_000n });
+    await attestOne(night(), d); // receipt wait is unmocked -> error after the send, fine
+    const arg = signTransaction.mock.calls[0]![0] as {
+      to: string; data: Hex; type: string; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; nonce: number; value: bigint;
+    };
+    expect(arg).toMatchObject({ to: EAS_ADDRESS, type: 'eip1559', gas: 240_000n, nonce: 7, value: 0n, maxPriorityFeePerGas: 10_000_000n, maxFeePerGas: 20_000_000n });
+    expect(decodeFunctionData({ abi: easAbi, data: arg.data }).functionName).toBe('attest');
+    expect(sendRawTransaction).toHaveBeenCalledWith({ serializedTransaction: SERIALIZED });
   });
 
   it('60 attestations at realistic Base fees (baseFee 0.005 gwei, ~350k gas each) reserve under 0.0004 ETH', async () => {
@@ -101,11 +114,12 @@ describe('explicit fees', () => {
     expect(reserved).toBeGreaterThan(0n);
   });
 
-  it('releases the reservation only when the tx was never broadcast', async () => {
-    const a = deps({ writeErr: new Error('sign failed') });
+  it('refunds the reservation only when nothing was sent', async () => {
+    const a = deps({ signErr: new Error('sign failed') });
     expect(await attestOne(night(), a.d)).toMatchObject({ skipped: 'error' });
     expect(a.release).toHaveBeenCalledTimes(1);
     expect(a.release).toHaveBeenCalledWith(240_000n * 3_000_000n);
+    expect(a.sendRawTransaction).not.toHaveBeenCalled();
     const b = deps({ estimateErr: new Error('x') });
     await attestOne(night(), b.d);
     expect(b.release).not.toHaveBeenCalled();
@@ -115,55 +129,86 @@ describe('explicit fees', () => {
   });
 });
 
-const SENT = ('0x' + '11'.repeat(32)) as Hex;
 const attestedLog = (uid: Hex, address: string = EAS_ADDRESS) => ({
   address,
   topics: encodeEventTopics({ abi: easAbi, eventName: 'Attested', args: { recipient: zeroAddress, attester: zeroAddress, schemaUID: schemaUid() } }),
   data: encodeAbiParameters([{ type: 'bytes32' }], [uid]),
 });
 const uid = (i: number) => keccak256(toBytes(`uid-${i}`));
+const mined = (logs: unknown[], status = 'success', transactionHash: Hex = SENT) => ({ status, transactionHash, logs });
 
-describe('after broadcast the tx hash is never lost', () => {
-  it('receipt wait fails -> skipped error WITH txHash; onBroadcast saw it first; no refund', async () => {
+describe('persist before send; after that the tx hash is never lost', () => {
+  it('the hash (keccak of the signed tx), nonce and sender are persisted BEFORE the raw tx is sent', async () => {
+    const { d, publicClient, sendRawTransaction } = deps();
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))]));
+    const persisted: [Hex, number, string][] = [];
+    const onBroadcast = vi.fn(async (h: Hex, n: number, s: string) => { persisted.push([h, n, s]); });
+    expect(await attestOne(night(), { ...d, onBroadcast })).toEqual({ uid: uid(1), txHash: SENT });
+    expect(persisted).toEqual([[SENT, 7, zeroAddress]]);
+    expect(onBroadcast.mock.invocationCallOrder[0]).toBeLessThan(sendRawTransaction.mock.invocationCallOrder[0]);
+    expect(publicClient.getTransactionCount).toHaveBeenCalledWith({ address: zeroAddress, blockTag: 'pending' });
+  });
+
+  it('send throws after the persist (timeout, "already known") -> skipped error WITH txHash + nonce, no refund', async () => {
+    const { d, release } = deps({ sendErr: Object.assign(new Error('x'), { name: 'TimeoutError' }) });
+    const onBroadcast = vi.fn(async () => undefined);
+    expect(await attestMany([night(1), night(2)], { ...d, onBroadcast })).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
+    expect(onBroadcast).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('a failing persist means nothing is sent and the reservation is refunded', async () => {
+    const { d, sendRawTransaction, release } = deps();
+    const r = await attestOne(night(), { ...d, onBroadcast: async () => { throw new Error('db down'); } });
+    expect(r).toEqual({ skipped: 'error', error: 'persist_failed' });
+    expect(sendRawTransaction).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('receipt wait fails -> skipped error WITH txHash + nonce; configurable wait', async () => {
     const { d, publicClient, release } = deps();
     publicClient.waitForTransactionReceipt.mockRejectedValue(Object.assign(new Error('x'), { name: 'WaitForTransactionReceiptTimeoutError' }));
-    const seen: [Hex, number][] = [];
-    const r = await attestMany([night(1), night(2)], { ...d, onBroadcast: async (h, n) => { seen.push([h, n]); } });
-    expect(r).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
-    expect(seen).toEqual([[SENT, 7]]);
+    expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
     expect(release).not.toHaveBeenCalled();
-    expect(publicClient.getTransactionCount).toHaveBeenCalledWith({ address: zeroAddress, blockTag: 'pending' });
     expect(publicClient.waitForTransactionReceipt).toHaveBeenCalledWith({ hash: SENT, timeout: 60_000 });
     await attestOne(night(), { ...d, receiptTimeoutMs: 30_000 });
     expect(publicClient.waitForTransactionReceipt).toHaveBeenLastCalledWith({ hash: SENT, timeout: 30_000 });
   });
 
+  it('a replacement receipt (another tx took our nonce) is never adopted: skipped replaced, no uids', async () => {
+    const { d, publicClient } = deps();
+    const other = keccak256(toBytes('someone else'));
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1)), attestedLog(uid(2))], 'success', other));
+    const r = await attestMany([night(1), night(2)], d);
+    expect(r).toEqual({ skipped: 'error', error: 'replaced', txHash: SENT, nonce: 7 });
+    expect('uids' in r).toBe(false);
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))], 'success', other.toUpperCase().replace('0X', '0x') as Hex));
+    expect(await attestOne(night(), d)).toMatchObject({ error: 'replaced' });
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))], 'success', SENT.toUpperCase().replace('0X', '0x') as Hex));
+    expect(await attestOne(night(), d)).toEqual({ uid: uid(1), txHash: SENT }); // same hash, other case: ours
+  });
+
   it('reverted receipt -> skipped error reverted WITH txHash', async () => {
     const { d, publicClient } = deps();
-    publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', logs: [] });
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([], 'reverted'));
     expect(await attestOne(night(), d)).toEqual({ skipped: 'error', error: 'reverted', txHash: SENT, nonce: 7 });
   });
 
   it('mined but logs do not match the batch -> skipped error WITH txHash (settled later, never re-sent)', async () => {
     const { d, publicClient } = deps();
-    publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [attestedLog(uid(1))] });
+    publicClient.waitForTransactionReceipt.mockResolvedValue(mined([attestedLog(uid(1))]));
     expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'uid_count_mismatch', txHash: SENT, nonce: 7 });
-  });
-
-  it('a throwing onBroadcast never breaks the send', async () => {
-    const { d, publicClient } = deps();
-    publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [attestedLog(uid(1))] });
-    const r = await attestOne(night(), { ...d, onBroadcast: async () => { throw new Error('db down'); } });
-    expect(r).toEqual({ uid: uid(1), txHash: SENT });
   });
 });
 
 describe('attestationStatus', () => {
   const SENDER = '0x00000000000000000000000000000000000000aa' as const;
-  const nf = () => Object.assign(new Error('Transaction receipt with hash could not be found'), { name: 'TransactionReceiptNotFoundError' });
-  const client = (receipt: () => Promise<unknown>, mined = 0) => ({
+  const named = (name: string) => Object.assign(new Error('not found'), { name });
+  const nf = () => named('TransactionReceiptNotFoundError');
+  const client = (receipt: () => Promise<unknown>, mined = 0, tx: () => Promise<unknown> = async () => { throw named('TransactionNotFoundError'); }) => ({
     getTransactionReceipt: vi.fn(receipt),
     getTransactionCount: vi.fn(async () => mined),
+    getTransaction: vi.fn(tx),
   });
 
   it('mined: uids of the EAS Attested logs in log order, other contracts ignored', async () => {
@@ -177,17 +222,25 @@ describe('attestationStatus', () => {
   });
 
   it('not found and latest nonce <= tx nonce -> pending (may still mine: stays claimed)', async () => {
-    for (const mined of [3, 4]) {
-      const c = client(async () => { throw nf(); }, mined);
+    for (const m of [3, 4]) {
+      const c = client(async () => { throw nf(); }, m);
       expect(await attestationStatus(SENT, 4, SENDER, c as never)).toEqual({ status: 'pending' });
     }
   });
 
-  it('not found and latest nonce > tx nonce -> dropped (another tx used the nonce); count read before the receipt', async () => {
+  it('dropped needs: nonce consumed (read before the receipt), no receipt, and the tx unknown to the node', async () => {
     const c = client(async () => { throw nf(); }, 5);
     expect(await attestationStatus(SENT, 4, SENDER, c as never)).toEqual({ status: 'dropped' });
     expect(c.getTransactionCount).toHaveBeenCalledWith({ address: SENDER, blockTag: 'latest' });
     expect(c.getTransactionCount.mock.invocationCallOrder[0]).toBeLessThan(c.getTransactionReceipt.mock.invocationCallOrder[0]);
+    expect(c.getTransaction).toHaveBeenCalledWith({ hash: SENT });
+  });
+
+  it('nonce consumed but the node still knows the tx (lagging node of a load-balanced RPC) -> pending', async () => {
+    const known = client(async () => { throw nf(); }, 5, async () => ({ hash: SENT, blockNumber: null }));
+    expect(await attestationStatus(SENT, 4, SENDER, known as never)).toEqual({ status: 'pending' });
+    const flaky = client(async () => { throw nf(); }, 5, async () => { throw new Error('rpc down'); });
+    expect(await attestationStatus(SENT, 4, SENDER, flaky as never)).toEqual({ status: 'pending' });
   });
 
   it('unknown nonce or sender -> never dropped', async () => {

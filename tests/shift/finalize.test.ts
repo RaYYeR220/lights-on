@@ -10,7 +10,8 @@ import {
 import { dispatchShift } from '@/lib/shift/dispatch';
 import { finalizeShift, maybeFinalizeStale } from '@/lib/shift/finalize';
 import { runProject, runShiftProject, liveWindow } from '@/lib/shift/run';
-import type { AttestDeps, NightAttestation } from '@/lib/attest/eas';
+import { attestMany as realAttestMany, type AttestDeps, type NightAttestation } from '@/lib/attest/eas';
+import type { ShiftDeps } from '@/lib/shift/deps';
 import { keccak256, toBytes, type Hex } from 'viem';
 import { asc, eq } from 'drizzle-orm';
 
@@ -20,6 +21,7 @@ beforeEach(async () => { db = await makeTestDb(); });
 type Mock = ReturnType<typeof vi.fn>;
 const HASH = (i: number) => `0x${i.toString(16).padStart(64, 'e')}`;
 const TX2 = `0x${'cd'.repeat(32)}` as Hex;
+const SENDER = '0x00000000000000000000000000000000000000aa' as const;
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => { resolve = r; });
@@ -211,7 +213,7 @@ describe('finalizeShift', () => {
     const d2 = makeDeps(db, { attestReceipt: pending }).deps;
     expect(await finalizeShift(shift.id, d2)).toMatchObject({ attested: 5 });
     expect(((d2.attestMany as Mock).mock.calls[0][0] as NightAttestation[]).length).toBe(5);
-    expect(pending).toHaveBeenCalledWith(TX2, null); // that batch reported no nonce
+    expect(pending).toHaveBeenCalledWith(TX2, null, null); // that batch reported no nonce or sender
     expect((await nightsOf(shift.id)).slice(20, 40).every((n) => n.attestationUid === null && n.attestTx === TX2)).toBe(true);
   });
 
@@ -262,7 +264,7 @@ describe('finalizeShift', () => {
 describe('post-broadcast reconciliation (no double attestation)', () => {
   /** attestMany that broadcasts (onBroadcast) and then loses the receipt. */
   const lostReceipt = (tx: Hex) => vi.fn(async (_ns: NightAttestation[], d: AttestDeps) => {
-    await d.onBroadcast?.(tx, 7);
+    await d.onBroadcast?.(tx, 7, SENDER);
     return { skipped: 'error' as const, error: 'timeout', txHash: tx, nonce: 7 };
   });
 
@@ -307,12 +309,12 @@ describe('post-broadcast reconciliation (no double attestation)', () => {
   it('receipt missing: pending (nonce still open) stays claimed however long; dropped (nonce consumed) releases', async () => {
     const { shift } = await shiftWithNights(1);
     await finalizeShift(shift.id, makeDeps(db, { attestMany: lostReceipt(TX2) as never }).deps);
-    expect((await nightsOf(shift.id))[0]).toMatchObject({ attestTx: TX2, attestNonce: 7 });
+    expect((await nightsOf(shift.id))[0]).toMatchObject({ attestTx: TX2, attestNonce: 7, attestSender: SENDER });
     const pending = vi.fn(async () => ({ status: 'pending' as const }));
     const late = makeDeps(db, { attestReceipt: pending });
     late.clock.now = new Date(NOW.getTime() + 6 * 3600_000); // hours later: still never released while the nonce is open
     expect(await finalizeShift(shift.id, late.deps)).toEqual({ attested: 0 });
-    expect(pending).toHaveBeenCalledWith(TX2, 7);
+    expect(pending).toHaveBeenCalledWith(TX2, 7, SENDER); // checked against the recorded sender
     expect(late.deps.attestMany).not.toHaveBeenCalled();
     expect((await nightsOf(shift.id))[0].attestClaimedAt).not.toBeNull();
 
@@ -370,7 +372,7 @@ describe('post-broadcast reconciliation (no double attestation)', () => {
   it('attestMany dying after the broadcast (no return) keeps the claim and the tx', async () => {
     const { shift } = await shiftWithNights(2);
     const dies = vi.fn(async (_ns: NightAttestation[], d: AttestDeps) => {
-      await d.onBroadcast?.(TX2, 7);
+      await d.onBroadcast?.(TX2, 7, SENDER);
       throw new Error('function killed');
     });
     expect(await finalizeShift(shift.id, makeDeps(db, { attestMany: dies as never }).deps)).toMatchObject({ skipped: 'unconfirmed' });
@@ -432,7 +434,7 @@ describe('stale recovery', () => {
   it('concurrent stale passes lease a finished shift: its receipt is checked once', async () => {
     const { shift } = await shiftWithNights(2);
     const lost = vi.fn(async (_ns: NightAttestation[], d: AttestDeps) => {
-      await d.onBroadcast?.(TX2, 7);
+      await d.onBroadcast?.(TX2, 7, SENDER);
       return { skipped: 'error' as const, error: 'timeout', txHash: TX2 };
     });
     await finalizeShift(shift.id, makeDeps(db, { attestMany: lost as never }).deps);
@@ -532,5 +534,58 @@ describe('claims', () => {
     expect(ns.reduce((a, b) => a + b, 0)).toBe(1);
     expect(deps.attestMany).toHaveBeenCalledTimes(1);
     expect((await getShift(db, shift.id))?.status).toBe('attested');
+  });
+
+  it('attested counts only the rows actually written', async () => {
+    const { shift } = await shiftWithNights(2);
+    const attestMany = vi.fn(async (ns: NightAttestation[]) => {
+      const [firstRow] = await nightsOf(shift.id);
+      await db.update(nights).set({ attestClaimId: 'someone-else' }).where(eq(nights.id, firstRow.id)); // token no longer ours
+      return { uids: ns.map((_, i) => uidOf(i + 1)), txHash: TX };
+    });
+    const r = await finalizeShift(shift.id, makeDeps(db, { attestMany: attestMany as never }).deps);
+    expect(r.attested).toBe(1);
+    expect((await nightsOf(shift.id)).map((n) => n.attestationUid)).toEqual([null, uidOf(2)]);
+  });
+});
+
+describe('real attestMany with a local signer (no chain)', () => {
+  const SIGNED = ('0x02' + 'cd'.repeat(90)) as Hex;
+  const HASH_OF_SIGNED = keccak256(SIGNED);
+  const fakeSigner = (sendErr?: Error) => {
+    const sendRawTransaction = vi.fn(async () => {
+      if (sendErr) throw sendErr;
+      return HASH_OF_SIGNED;
+    });
+    const wallet = { account: { address: SENDER }, chain: undefined, signTransaction: vi.fn(async () => SIGNED), sendRawTransaction };
+    const publicClient = {
+      estimateContractGas: vi.fn(async () => 200_000n),
+      getBlock: vi.fn(async () => ({ baseFeePerGas: 1_000_000n })),
+      estimateMaxPriorityFeePerGas: vi.fn(async () => 1_000_000n),
+      getTransactionCount: vi.fn(async () => 11),
+      waitForTransactionReceipt: vi.fn(),
+    };
+    return { signer: { wallet, publicClient } as unknown as ShiftDeps['signer'], sendRawTransaction };
+  };
+
+  it('send fails after the persist -> claim kept with attest_tx + nonce + sender, no release, no gas refund', async () => {
+    const { shift } = await shiftWithNights(2);
+    const { signer, sendRawTransaction } = fakeSigner(Object.assign(new Error('already known'), { name: 'TimeoutError' }));
+    const release = vi.fn(async () => undefined);
+    const { deps } = makeDeps(db, { attestMany: realAttestMany, signer, release });
+    expect(await finalizeShift(shift.id, deps)).toMatchObject({ attested: 0, skipped: 'unconfirmed' });
+    expect(sendRawTransaction).toHaveBeenCalledTimes(1);
+    const rows = await nightsOf(shift.id);
+    expect(rows.every((n) => n.attestClaimedAt !== null && n.attestTx === HASH_OF_SIGNED && n.attestNonce === 11 && n.attestSender === SENDER))
+      .toBe(true);
+    expect(release).not.toHaveBeenCalled();
+    expect(await getShift(db, shift.id)).toMatchObject({ status: 'attest_pending', notes: 'unconfirmed:timeout' });
+
+    // the next pass checks that tx against its recorded nonce and sender, and sends nothing new while it may mine
+    const attestReceipt = vi.fn(async () => ({ status: 'pending' as const }));
+    const later = makeDeps(db, { attestMany: realAttestMany, signer, attestReceipt });
+    expect(await finalizeShift(shift.id, later.deps)).toEqual({ attested: 0 });
+    expect(attestReceipt).toHaveBeenCalledWith(HASH_OF_SIGNED, 11, SENDER);
+    expect(sendRawTransaction).toHaveBeenCalledTimes(1);
   });
 });

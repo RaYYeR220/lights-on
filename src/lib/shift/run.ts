@@ -374,9 +374,10 @@ export async function runProject(
       outcome = { skipped: 'disabled' }; // no registered watcher identity: never attest agentId 0
     } else {
       let sent: Hex | undefined;
+      // Runs after signing and BEFORE the raw tx is sent: if this write fails, nothing is sent.
       const onBroadcast = async (h: Hex) => {
+        await updateLiveRun(db, liveRunId!, { tx: h });
         sent = h;
-        await updateLiveRun(db, liveRunId!, { tx: h }); // persisted before the receipt wait
       };
       try {
         const r = await deps.attest(att, attestDepsFor(deps, onBroadcast, { receiptTimeoutMs: LIVE_RECEIPT_TIMEOUT_MS }));

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { keccak256, toBytes, type Hex } from 'viem';
+import { keccak256, toBytes, type Address, type Hex } from 'viem';
 import {
   DuplicateNight, claimShiftFinalization, claimShiftNights, countUnattested, getNightsForProjects, getProjectsByIds,
   getShift, insertNight, leaseShift, listProjects, listStaleShifts, listUnconfirmedBroadcasts, markNightsBroadcast,
@@ -29,6 +29,8 @@ export interface FinalizeOptions {
   clock?: () => number;
 }
 export interface FinalizeResult { attested: number; txHash?: Hex; skipped?: string }
+/** A batch handed to attestMany; tx/nonce/sender are set once the signed tx is persisted. */
+interface Flight { ids: number[]; claimId: string; tx?: Hex; nonce?: number; sender?: Address }
 
 export function toAttestation(
   p: { slug: string; night: number; kind: Kind; status: Status; lit30: number; evidenceHash: Hex },
@@ -114,15 +116,15 @@ async function reconcileBroadcasts(shift: ShiftRow, deps: ShiftDeps, o: Required
     const claimId = batch[0].attestClaimId!;
     const tx = batch[0].attestTx! as Hex;
     const nonce = batch[0].attestNonce ?? null;
+    const sender = (batch[0].attestSender ?? null) as Address | null;
     const ids = batch.map((r) => r.id);
-    const rc = await receipt(tx, nonce).catch((e) => ({ status: 'error' as const, error: safeErrorCode(e) }));
+    const rc = await receipt(tx, nonce, sender).catch((e) => ({ status: 'error' as const, error: safeErrorCode(e) }));
     if (rc.status === 'success') {
       if (rc.uids.length !== batch.length) {
         console.error('shift.reconcile: uid count mismatch for a mined batch; rows left claimed');
         continue;
       }
-      await setNightAttestations(deps.db, batch.map((r, i) => ({ id: r.id, uid: rc.uids[i] })), tx, claimId);
-      attested += batch.length;
+      attested += await setNightAttestations(deps.db, batch.map((r, i) => ({ id: r.id, uid: rc.uids[i] })), tx, claimId);
       last = tx;
     } else if (rc.status === 'reverted' || rc.status === 'dropped') {
       await releaseNightClaims(deps.db, ids, claimId, tx);
@@ -151,7 +153,8 @@ async function attestationsFor(rows: NightRow[], shift: ShiftRow, deps: ShiftDep
  *   2. fill missing nights (`unavailable`);
  *   3. loop: claim <= 20 unattested rows under a fresh claim token (each row reaches exactly one caller), send them
  *      with one multiAttest. A batch that was never broadcast, or that reverted, is released for a retry; a broadcast
- *      batch with an unknown outcome keeps its claim, tx and nonce, for step 1 of a later pass, and the loop stops;
+ *      batch with an unknown outcome keeps its claim, tx, nonce and sender (persisted before the send), for step 1
+ *      of a later pass, and the loop stops;
  *   4. status `attested` / `attest_pending` (also after any throw), then the finalization claim: onFinalized fires
  *      once, from the call that first closed the shift, after the attestation writes.
  */
@@ -169,7 +172,7 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
   /** Claimed by us and never handed to attestMany: always safe to release (under our token). */
   const unsent: { ids: number[]; claimId: string }[] = [];
   /** Handed to attestMany: released only on proof that nothing is on chain. */
-  let inflight: { ids: number[]; claimId: string; tx?: Hex; nonce?: number } | null = null;
+  let inflight: Flight | null = null;
 
   try {
     const rec = await reconcileBroadcasts(shift, deps, o);
@@ -196,12 +199,14 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
         const atts = await attestationsFor(rows, shift, deps);
         unsent.splice(unsent.indexOf(held), 1);
 
-        const flight: { ids: number[]; claimId: string; tx?: Hex; nonce?: number } = { ids, claimId };
+        const flight: Flight = { ids, claimId };
         inflight = flight;
-        const onBroadcast = async (h: Hex, nonce: number) => {
+        // Runs after signing and BEFORE the raw tx is sent: if this write fails, nothing is sent.
+        const onBroadcast = async (h: Hex, nonce: number, sender: Address) => {
+          await markNightsBroadcast(db, ids, claimId, h, nonce, sender);
           flight.tx = h;
           flight.nonce = nonce;
-          await markNightsBroadcast(db, ids, claimId, h, nonce);
+          flight.sender = sender;
         };
         let r: Awaited<ReturnType<ShiftDeps['attestMany']>>;
         try {
@@ -221,7 +226,7 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
           if (tx && r.error !== 'reverted') {
             // Broadcast, outcome unknown: keep claim + tx + nonce; a later pass settles it from the receipt.
             flight.tx = tx;
-            await markNightsBroadcast(db, ids, claimId, tx, r.nonce ?? flight.nonce ?? null);
+            await markNightsBroadcast(db, ids, claimId, tx, r.nonce ?? flight.nonce ?? null, flight.sender ?? null);
             skipped = 'unconfirmed';
             note = `unconfirmed:${r.error ?? 'error'}`;
           } else {
@@ -239,9 +244,8 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
           break;
         }
         flight.tx = r.txHash;
-        await setNightAttestations(db, ids.map((id, k) => ({ id, uid: r.uids[k] })), r.txHash, claimId);
+        attested += await setNightAttestations(db, ids.map((id, k) => ({ id, uid: r.uids[k] })), r.txHash, claimId);
         inflight = null;
-        attested += ids.length;
         txHash = r.txHash;
         txs.push(r.txHash);
       }
@@ -250,8 +254,8 @@ export async function finalizeShift(shiftId: number, deps: ShiftDeps, opts: Fina
     skipped ??= 'error';
     note ??= `skipped:error:${safeErrorCode(e)}`;
     console.error('shift.finalize failed:', safeErrorCode(e));
-    const f = inflight as { ids: number[]; claimId: string; tx?: Hex; nonce?: number } | null;
-    if (f?.tx) await markNightsBroadcast(db, f.ids, f.claimId, f.tx, f.nonce ?? null).catch(() => undefined);
+    const f = inflight as Flight | null;
+    if (f?.tx) await markNightsBroadcast(db, f.ids, f.claimId, f.tx, f.nonce ?? null, f.sender ?? null).catch(() => undefined);
   } finally {
     for (const u of unsent) await releaseNightClaims(db, u.ids, u.claimId).catch(() => undefined);
   }

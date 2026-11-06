@@ -75,6 +75,8 @@ export const nights = pgTable('nights', {
   attestTx: text('attest_tx'),
   /** Nonce of attest_tx (set before signing): a not-found tx is dropped only once a later tx consumed this nonce. */
   attestNonce: integer('attest_nonce'),
+  /** Address that signed attest_tx: its nonce is checked against this account, not whatever key is configured now. */
+  attestSender: text('attest_sender'),
   attestClaimedAt: tsz('attest_claimed_at'),
   /** Claim token (random uuid per claim statement): every write to a claimed row must present it. */
   attestClaimId: text('attest_claim_id'),

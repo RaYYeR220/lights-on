@@ -296,7 +296,7 @@ describe('runProject (live)', () => {
     let txDuringWait: string | null | undefined;
     let timeout: number | undefined;
     const attest = vi.fn(async (_n: unknown, d: AttestDeps) => {
-      await d.onBroadcast?.(tx, 3);
+      await d.onBroadcast?.(tx, 3, '0x00000000000000000000000000000000000000aa');
       timeout = d.receiptTimeoutMs;
       txDuringWait = (await db.select().from(liveRuns))[0].tx;
       return { skipped: 'error' as const, error: 'timeout', txHash: tx, nonce: 3 };
