@@ -6,6 +6,7 @@ import { nightLabel, reasonLines, STATUS_LABEL, STATUS_MEANING } from "@/lib/vie
 import type { EvidenceBundle } from "@/lib/types";
 import { EvidenceView } from "./EvidenceView";
 import type { VerifyOutcome } from "./verifyInBrowser";
+import { siteUrl } from "@/lib/site";
 import s from "./project.module.css";
 
 type Loaded = { state: "idle" | "loading" } | { state: "ok"; text: string; bundle: EvidenceBundle } | { state: "error"; message: string };
@@ -15,6 +16,23 @@ const swatch = (st: StripNight["status"]) =>
 
 export const easscan = (uid: string) => `https://base.easscan.org/attestation/view/${uid}`;
 export const basescanTx = (tx: string) => `https://basescan.org/tx/${tx}`;
+
+/**
+ * The offline check for one night, ready to paste in a clone of the repo: fetch the published bundle, then verify it
+ * against the attestation on Base. Null until the night has both an evidence hash and an attestation uid. Without a
+ * known watcher address the script falls back to NEXT_PUBLIC_WATCHER_ADDRESS from the environment.
+ */
+export function verifyCommand(p: {
+  site: string; slug: string; night: number; uid: string | null; evidenceHash: string | null; watcher: string | null;
+}): string | null {
+  if (!p.uid || !p.evidenceHash) return null;
+  const file = `evidence-${p.slug}-${p.night}.json`;
+  const attester = p.watcher?.trim() ? ` --attester ${p.watcher.trim()}` : "";
+  return [
+    `curl -s ${p.site.replace(/\/+$/, "")}/api/v1/evidence/${p.evidenceHash} -o ${file}`,
+    `pnpm tsx scripts/verify-night.ts --network base --uid ${p.uid} --bundle ${file}${attester}`,
+  ].join("\n");
+}
 
 /** "deploy between 20261104220756 and 20261105220853" -> readable Wayback capture times. */
 function waybackNote(note: string): string {
@@ -59,6 +77,18 @@ export function NightDrawer({
 }
 
 /** One night's contents; keyed by night so its evidence and verify state start fresh for each night. */
+function OfflineCheck({ cmd, watcherKnown }: { cmd: string | null; watcherKnown: boolean }) {
+  if (!cmd) return <p className={s.small} style={{ marginTop: 12 }}>The offline check needs an attestation; this night has none yet.</p>;
+  return (
+    <div className={s.small} style={{ marginTop: 12 }}>
+      <p>Offline, in a clone of the repo{watcherKnown ? "" : " (set NEXT_PUBLIC_WATCHER_ADDRESS to the watcher address first)"}:</p>
+      <pre className={s.cmd} data-testid="verify-command">
+        <code>{cmd}</code>
+      </pre>
+    </div>
+  );
+}
+
 function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; watcher: string | null; close: () => void }) {
   const hash = n.evidenceHash;
   const [ev, setEv] = useState<Loaded>(hash ? { state: "loading" } : { state: "idle" });
@@ -251,9 +281,7 @@ function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; 
                   {verify.out.summary ? <li className={s.small}>{verify.out.summary}</li> : null}
                 </ul>
               ) : null}
-              <p className={s.small} style={{ marginTop: 12 }}>
-                Offline: <code>pnpm tsx scripts/verify-night.ts --uid &lt;uid&gt; --bundle evidence.json</code> ({slug})
-              </p>
+              <OfflineCheck cmd={verifyCommand({ site: siteUrl(), slug, night: n.night, uid: n.attestationUid, evidenceHash: n.evidenceHash, watcher })} watcherKnown={!!watcher} />
             </div>
           ) : null}
         </div>

@@ -11,7 +11,7 @@ async function main() {
   const uid = arg('uid') as `0x${string}` | undefined;
   const file = arg('bundle');
   const attesters = (arg('attester') ?? process.env.NEXT_PUBLIC_WATCHER_ADDRESS ?? '').split(',').map((s) => s.trim()).filter(Boolean) as Address[];
-  if (!uid || !file) throw new Error('usage: --uid <attestation uid> --bundle <evidence.json> [--attester 0x..]');
+  if (!uid || !file) throw new Error('usage: --network base|fork --uid <attestation uid> --bundle <evidence.json> [--attester 0x..[,0x..]]');
   if (attesters.length === 0) throw new Error('no attester: pass --attester or set NEXT_PUBLIC_WATCHER_ADDRESS');
   const bundle = JSON.parse(readFileSync(file, 'utf8')) as EvidenceBundle;
   const { publicClient } = connect(false);

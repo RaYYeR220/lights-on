@@ -215,6 +215,18 @@
   font: 400 12px/1.55 var(--mono);
   color: var(--ink-3);
 }
+.cmd {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-chip);
+  background: var(--panel-solid);
+  font: 400 11.5px/1.5 var(--mono);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
 
 /* live shift checklist */
 .steps {
