@@ -57,6 +57,13 @@
       "when": 1793952964602,
       "tag": "0007_subscription_pending",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793953407853,
+      "tag": "0008_claim_nonces",
+      "breakpoints": true
     }
   ]
 }

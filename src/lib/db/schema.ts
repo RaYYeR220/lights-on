@@ -162,6 +162,16 @@ export const founderNotes = pgTable('founder_notes', {
   createdAt: tsz('created_at').notNull().defaultNow(),
 });
 
+/** Single-use SIWE nonces for founder claim / notes / draft (only the sha256 is stored). */
+export const claimNonces = pgTable('claim_nonces', {
+  nonceHash: text('nonce_hash').primaryKey(),
+  projectId: integer('project_id').notNull().references(() => projects.id),
+  purpose: text('purpose').notNull(),
+  expiresAt: tsz('expires_at').notNull(),
+  usedAt: tsz('used_at'),
+  createdAt: tsz('created_at').notNull().defaultNow(),
+}, (t) => [index('claim_nonces_expires_idx').on(t.expiresAt)]);
+
 export const budget = pgTable('budget', {
   day: date('day', { mode: 'string' }).primaryKey(),
   llmTokens: numeric('llm_tokens', { mode: 'string' }).notNull().default('0'),

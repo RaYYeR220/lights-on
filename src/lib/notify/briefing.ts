@@ -106,8 +106,8 @@ const CAPWORD = /\b[A-Z][A-Za-z0-9]{2,}\b/g;
 const ALLOWED_WORDS = new Set(['Lights', 'Shipped', 'Building', 'Quiet', 'Down', 'Night', 'Upcoming', 'The', 'Today', 'Good', 'Morning', 'Reading']);
 
 /** True when the polished text keeps the template's facts: same project names, no new names, no new numbers, clean copy. */
-export function polishKeepsFacts(polished: string, template: string, names: string[]): boolean {
-  if (!polished || polished.length > BRIEFING_MAX) return false;
+export function polishKeepsFacts(polished: string, template: string, names: string[], max = BRIEFING_MAX): boolean {
+  if (!polished || polished.length > max) return false;
   if (BANNED.test(polished) || /[<>*_#`]/.test(polished) || /https?:\/\/|www\./i.test(polished)) return false;
   for (const n of names) if (!polished.includes(n)) return false;
   const known = new Set<string>([...(template.match(CAPWORD) ?? []), ...ALLOWED_WORDS]);
