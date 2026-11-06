@@ -40,6 +40,8 @@ export interface ProjectView {
   contracts: { chainId: number; address: string; role: string }[];
   token: { chainId: number; address: string; symbol: string } | null;
   vibestarter: { campaignId: string; escrow: string; founderWallet: string } | null;
+  /** When the view was built (ms): the reference time for open windows. */
+  generatedAt: number;
   lastNight: number;
   strip: StripNight[];
   status: Status | null;
@@ -124,6 +126,7 @@ export async function getProjectView(db: Db, slug: string, opts: { now?: Date } 
     contracts: Array.isArray(p.contracts) ? p.contracts : [],
     token: p.token ?? null,
     vibestarter: p.vibestarter ?? null,
+    generatedAt: now.getTime(),
     lastNight,
     strip,
     status: statusRow?.status ?? null,
