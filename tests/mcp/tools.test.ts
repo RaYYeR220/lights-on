@@ -55,7 +55,8 @@ describe('read tools', () => {
     const r = await isStillShipping(db, 'revoke-cash', NOW);
     expect(r).toEqual({
       slug: 'revoke-cash', status: 'shipped', streak: 2, lit30: 2, lastShip: 20261105, lastNight: 20261105,
-      attestationUid: '0xuid', proof: [P1], manifestUri: `${siteUrl()}/api/v1/manifest/${MANIFEST}`,
+      attestationUid: '0xuid', proof: [P1], attestLeaf: LEAF, attestLit30: 2, evidenceHash: '0xabc',
+      manifestUri: `${siteUrl()}/api/v1/manifest/${MANIFEST}`,
       verifiedBy: 'EAS on Base', schemaUid: rootSchemaUid(),
     });
   });

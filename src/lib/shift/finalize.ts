@@ -173,16 +173,24 @@ interface RootPlan { built: BuiltManifest; batch: NightProofBatch; root: NightRo
 
 async function rootFor(rows: NightRow[], shift: ShiftRow, deps: ShiftDeps): Promise<RootPlan> {
   const ids = [...new Set(rows.map((r) => r.projectId))];
-  const slugs = new Map((await getProjectsByIds(deps.db, ids)).map((p) => [p.id, p.slug]));
+  const byId = new Map((await getProjectsByIds(deps.db, ids)).map((p) => [p.id, p]));
   const history = await getNightsForProjects(deps.db, ids, lit30From(nightOf(shift.night)));
   const agentId = deps.agentId ?? 0n;
-  const built = buildNightManifest(rows.map((row) => ({
-    slug: slugs.get(row.projectId) ?? String(row.projectId),
-    night: nightOf(row.night),
+  const built = buildNightManifest(rows.map((row) => {
+    const p = byId.get(row.projectId);
+    // The projectKey is keccak256(slug): a row whose project cannot be read is never attested under a made-up key.
+    // Thrown while the batch is still `unsent`, so it is released and retried by a later pass.
+    if (!p) throw new Error('project_missing');
+    return {
+      slug: p.slug,
+      // community-added and hidden projects are unlisted: their slug stays out of the public manifest
+      listed: !p.hidden && p.source !== 'community',
+      night: nightOf(row.night),
     status: row.status,
-    lit30: lit30Of(history.filter((h) => h.projectId === row.projectId), nightOf(row.night)),
-    evidenceHash: row.evidenceHash as Hex,
-  })), agentId);
+      lit30: lit30Of(history.filter((h) => h.projectId === row.projectId), nightOf(row.night)),
+      evidenceHash: row.evidenceHash as Hex,
+    };
+  }), agentId);
   const batch: NightProofBatch = {
     root: built.root,
     manifest: built.hash,

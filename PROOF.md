@@ -33,7 +33,7 @@ bytes32 root,uint32 night,uint16 count,uint256 agentId,string manifestURI
 | `night` | UTC date of the shift as yyyymmdd |
 | `count` | how many project-nights the root covers |
 | `agentId` | the watcher's ERC-8004 agent id |
-| `manifestURI` | `https://lights-on-watch.vercel.app/api/v1/manifest/<hash>`: every leaf, as canonical JSON; keccak256 of it is `<hash>` |
+| `manifestURI` | `https://lights-on-watch.vercel.app/api/v1/manifest/<hash>`: every leaf, as canonical JSON; keccak256 of it is `<hash>`. An unlisted project (community-added or hidden) appears by `projectKey` only, with `slug: null` |
 
 A leaf is `keccak256(abi.encode(bytes32 projectKey, uint32 night, uint8 kind = 0, uint8 status, uint16 lit30, bytes32 evidenceHash))`, with the fields below. The leaves are sorted ascending; each parent is keccak256 of its two children concatenated in ascending order; a node without a sibling moves up unchanged; one leaf is its own root. Each project-night stores its proof (the sibling hashes from its leaf to the root) and shares the root attestation's UID. Up to 500 project-nights go in one root, so a night with up to 500 watched projects is exactly one transaction (`attestRoot()` in `src/lib/attest/eas.ts`, `buildTree()` in `src/lib/attest/merkle.ts`, `buildNightManifest()` in `src/lib/attest/manifest.ts`).
 

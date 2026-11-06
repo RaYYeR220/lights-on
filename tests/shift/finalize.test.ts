@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { makeTestDb } from '../helpers/db';
 import { makeDeps, seedProject, NOW, TX, uidOf, until } from '../helpers/shift';
 import type { Db } from '@/lib/db';
-import { liveRuns, nightManifests, nights, shifts, type NightRow } from '@/lib/db/schema';
+import { liveRuns, nightManifests, nights, projects, shifts, type NightRow } from '@/lib/db/schema';
 import {
   createNightlyShift, getEvidence, getNightManifest, getNights, getShift, insertNight, listStaleShifts, updateShift,
   claimShiftNights, releaseNightClaims, markNightsBroadcast, setNightAttestations, type NightProofBatch,
@@ -151,6 +151,60 @@ describe('finalizeShift: one Merkle root per night', () => {
     expect(await getShift(db, shift.id)).toMatchObject({ status: 'attested', attestTxs: [TX] });
     expect(onFinalized).toHaveBeenCalledTimes(1);
     expect(onFinalized).toHaveBeenCalledWith(shift.id);
+  });
+
+  it('unlisted projects (community or hidden) are leaves under their projectKey, with no slug in the manifest', async () => {
+    const { shift } = await shiftWithNights(1);
+    const extra = [
+      await seedProject(db, 'comm-watch', { source: 'community' }),
+      await seedProject(db, 'hidden-one', { hidden: true }),
+    ];
+    for (const [i, p] of extra.entries()) {
+      await insertNight(db, { projectId: p.id, night: '2026-11-06', status: 'quiet', observed: true, shiftId: shift.id, evidenceHash: HASH(50 + i) });
+    }
+    const { deps } = makeDeps(db);
+    expect(await finalizeShift(shift.id, deps)).toEqual({ attested: 3, txHash: TX });
+    const rows = await nightsOf(shift.id);
+    const manifest = (await getNightManifest(db, rows[0].attestManifest!))!;
+    expect(manifest.count).toBe(3);
+    expect(JSON.stringify(manifest)).not.toMatch(/comm-watch|hidden-one/);
+    expect(manifest.leaves.find((l) => l.projectKey === keccak256(toBytes('p0')))?.slug).toBe('p0');
+    for (const [i, p] of extra.entries()) {
+      const row = rows.find((n) => n.projectId === p.id)!;
+      const projectKey = keccak256(toBytes(p.slug));
+      const leaf = manifest.leaves.find((l) => l.projectKey === projectKey)!;
+      expect(leaf.slug).toBeNull();
+      expect(leaf.leaf).toBe(row.attestLeaf);
+      expect(row.attestLeaf).toBe(nightLeaf({ projectKey, night: 20261106, status: 3, lit30: 0, evidenceHash: HASH(50 + i) as Hex }));
+      expect(proven(row)).toBe(true);
+    }
+  });
+
+  it('a batch row whose project cannot be read is never attested under a made-up slug: throw, release, retry later', async () => {
+    const { shift } = await shiftWithNights(2);
+    const blind = Object.create(db) as Db;
+    blind.select = ((...a: never[]) => {
+      const q = (db.select as (...x: never[]) => ReturnType<Db['select']>)(...a);
+      const from = q.from.bind(q);
+      (q as unknown as { from: unknown }).from = (t: unknown) => {
+        const f = from(t as never);
+        if (t !== projects) return f;
+        const where = f.where.bind(f);
+        (f as unknown as { where: unknown }).where = (c: unknown) => {
+          const w = where(c as never);
+          (w as unknown as { then: unknown }).then = (ok: (v: unknown[]) => unknown, ko: (e: unknown) => unknown) => Promise.resolve([]).then(ok, ko);
+          return w;
+        };
+        return f;
+      };
+      return q;
+    }) as Db['select'];
+    const { deps } = makeDeps(blind);
+    expect(await finalizeShift(shift.id, deps)).toMatchObject({ attested: 0, skipped: 'error' });
+    expect(deps.attestRoot).not.toHaveBeenCalled();
+    expect(await db.select().from(nightManifests)).toHaveLength(0);
+    expect((await nightsOf(shift.id)).every((n) => n.attestClaimedAt === null && n.attestClaimId === null)).toBe(true);
+    expect((await getShift(db, shift.id))?.status).toBe('attest_pending');
   });
 
   it('a shift of <= 500 nights is exactly one transaction', async () => {

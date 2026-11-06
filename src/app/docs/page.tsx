@@ -41,7 +41,7 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     path: "GET /api/v1/manifest/{hash}",
-    text: "The night manifest behind a nightly root attestation (its manifestURI), as canonical JSON: every project-night of the root with its slug, status, lit30, evidence hash and leaf. keccak256 of the body equals the hash; cached forever.",
+    text: "The night manifest behind a nightly root attestation (its manifestURI), as canonical JSON: every project-night of the root with its project key, status, lit30, evidence hash and leaf, and its slug unless the project is unlisted. keccak256 of the body equals the hash; cached forever.",
     shape: `{ v: 1, schema: "lights-on/night-manifest", night, count, root, agentId,
   leaves: [{ slug, projectKey, night, kind: 0, status, statusCode, lit30, evidenceHash, leaf }] }`,
   },

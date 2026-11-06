@@ -697,6 +697,7 @@ export interface NightDigest {
   head: {
     night: string; observed: boolean; status: NightRow['status']; summary: string | null; createdAt: Date;
     evidenceHash: string | null; attestationUid: string | null; attestProof: string[] | null; attestManifest: string | null;
+    attestLeaf: string | null; attestLit30: number | null;
   } | null;
 }
 
@@ -730,7 +731,8 @@ export async function getNightDigests(db: Db, ids: number[], from: string, to: s
     SELECT c.project_id AS "projectId", c.codes, h.night::text AS "headNight", h.observed AS "headObserved",
       n.status AS "headStatus", n.summary AS "headSummary", to_json(n.created_at) #>> '{}' AS "headCreatedAt",
       n.evidence_hash AS "headEvidenceHash", n.attestation_uid AS "headAttestationUid",
-      n.attest_proof AS "headAttestProof", n.attest_manifest AS "headAttestManifest"
+      n.attest_proof AS "headAttestProof", n.attest_manifest AS "headAttestManifest",
+      n.attest_leaf AS "headAttestLeaf", n.attest_lit30 AS "headAttestLit30"
     FROM codes c
     LEFT JOIN head h ON h.project_id = c.project_id
     LEFT JOIN nights n ON n.project_id = h.project_id AND n.night = h.night AND n.observed = h.observed
@@ -739,6 +741,7 @@ export async function getNightDigests(db: Db, ids: number[], from: string, to: s
     projectId: number; codes: string | null; headNight: string | null; headObserved: boolean | null;
     headStatus: NightRow['status'] | null; headSummary: string | null; headCreatedAt: string | null;
     headEvidenceHash: string | null; headAttestationUid: string | null; headAttestProof: string[] | null; headAttestManifest: string | null;
+    headAttestLeaf: string | null; headAttestLit30: number | null;
   };
   return (res as unknown as { rows: Raw[] }).rows.map((r) => ({
     projectId: Number(r.projectId),
@@ -748,6 +751,7 @@ export async function getNightDigests(db: Db, ids: number[], from: string, to: s
           night: r.headNight, observed: !!r.headObserved, status: r.headStatus, summary: r.headSummary,
           createdAt: new Date(r.headCreatedAt ?? 0), evidenceHash: r.headEvidenceHash, attestationUid: r.headAttestationUid,
           attestProof: r.headAttestProof ?? null, attestManifest: r.headAttestManifest ?? null,
+          attestLeaf: r.headAttestLeaf ?? null, attestLit30: r.headAttestLit30 === null || r.headAttestLit30 === undefined ? null : Number(r.headAttestLit30),
         }
       : null,
   }));

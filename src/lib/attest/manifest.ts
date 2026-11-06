@@ -22,10 +22,18 @@ export function nightLeaf(p: { projectKey: Hex; night: number; status: 1 | 2 | 3
 /** lit30 as the uint16 field stores it. */
 export const clampLit30 = (n: number) => Math.min(Math.max(0, Math.trunc(n)), 65_535);
 
-export interface ManifestEntry { slug: string; night: number; status: Status; lit30: number; evidenceHash: Hex }
+export interface ManifestEntry {
+  slug: string; night: number; status: Status; lit30: number; evidenceHash: Hex;
+  /**
+   * false for an unlisted project (community-added or hidden): its leaf and projectKey are published, its slug is not
+   * (`slug: null`). The leaf never contains the slug, so the proof and verify are unaffected. Default true.
+   */
+  listed?: boolean;
+}
 
 export interface ManifestLeaf {
-  slug: string; projectKey: Hex; night: number; kind: 0; status: Status; statusCode: 1 | 2 | 3 | 4 | 5;
+  /** null for an unlisted project; projectKey = keccak256(slug) still identifies it to anyone who knows the slug. */
+  slug: string | null; projectKey: Hex; night: number; kind: 0; status: Status; statusCode: 1 | 2 | 3 | 4 | 5;
   lit30: number; evidenceHash: Hex; leaf: Hex;
 }
 
@@ -60,7 +68,7 @@ export function buildNightManifest(entries: ManifestEntry[], agentId: bigint): B
     const lit30 = clampLit30(e.lit30);
     const evidenceHash = e.evidenceHash.toLowerCase() as Hex;
     return {
-      slug: e.slug, projectKey, night, kind: 0, status: e.status, statusCode, lit30, evidenceHash,
+      slug: e.listed === false ? null : e.slug, projectKey, night, kind: 0, status: e.status, statusCode, lit30, evidenceHash,
       leaf: nightLeaf({ projectKey, night, status: statusCode, lit30, evidenceHash }),
     };
   });

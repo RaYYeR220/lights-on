@@ -3,7 +3,7 @@ import { hashEvidence } from '@/lib/shift/evidence';
 import { STATUS_CODE, type EvidenceBundle, type Status } from '@/lib/types';
 import { EAS_ADDRESS, easAbi } from './abi';
 import { decodeNight, decodeRoot, rootSchemaUid, schemaUid } from './eas';
-import { clampLit30, nightLeaf } from './manifest';
+import { nightLeaf } from './manifest';
 import { verifyProof } from './merkle';
 import type { AnyPublicClient } from './signer';
 
@@ -22,6 +22,7 @@ export type VerifyChecks = SingleChecks | RootChecks;
 /** What a nightly row says about itself (REST / page data). Untrusted: it only matches if it proves into the root. */
 export interface RootRow {
   status: Status;
+  /** The lit30 the leaf commits to (attestLit30): an integer in 0..65535, anything else fails. */
   lit30: number;
   proof: readonly Hex[] | readonly string[];
   /** The row's evidence hash; defaults to the bundle's. Lets a mismatch say "this bundle is not that row's evidence". */
@@ -102,9 +103,11 @@ export async function verifyNight(
     const row = opts.row;
     const code = row ? STATUS_CODE[row.status] : undefined;
     const leafHash = (row?.evidenceHash ?? localHash) as Hex;
-    if (row && code && Number.isInteger(row.lit30) && HEX32.test(leafHash) && Array.isArray(row.proof)) {
+    // lit30 must already be a uint16: clamping an out-of-range value could turn it into the committed one
+    const lit30Ok = !!row && Number.isInteger(row.lit30) && row.lit30 >= 0 && row.lit30 <= 65_535;
+    if (row && code && lit30Ok && HEX32.test(leafHash) && Array.isArray(row.proof)) {
       const leaf = nightLeaf({
-        projectKey: keccak256(toBytes(bundle.project)), night: bundle.night, status: code, lit30: clampLit30(row.lit30), evidenceHash: leafHash,
+        projectKey: keccak256(toBytes(bundle.project)), night: bundle.night, status: code, lit30: row.lit30, evidenceHash: leafHash,
       });
       out.leaf = leaf;
       out.proofSteps = row.proof.length;

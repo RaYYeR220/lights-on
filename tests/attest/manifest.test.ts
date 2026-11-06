@@ -52,6 +52,19 @@ describe('night manifest', () => {
     expect(buildNightManifest([entry(1), entry(2), entry(3)], 8n).hash).not.toBe(a.hash); // agentId is part of it
   });
 
+  it('an unlisted project (community or hidden) keeps its projectKey and leaf but has no slug in the manifest', () => {
+    const listed = buildNightManifest([entry(1), entry(2)], 7n);
+    const m = buildNightManifest([entry(1), entry(2, { listed: false })], 7n);
+    expect(m.root).toBe(listed.root); // the leaf never contained the slug
+    const hidden = m.manifest.leaves.find((l) => l.projectKey === keccak256(toBytes('proj-2')))!;
+    expect(hidden.slug).toBeNull();
+    expect(hidden.leaf).toBe(nightLeaf({ projectKey: keccak256(toBytes('proj-2')), night: 20261106, status: 1, lit30: 2, evidenceHash: ev(2) }));
+    expect(verifyProof(hidden.leaf, m.proofs.get(hidden.leaf)!, m.root)).toBe(true);
+    expect(m.body).not.toContain('proj-2');
+    expect(m.manifest.leaves.find((l) => l.projectKey === keccak256(toBytes('proj-1')))!.slug).toBe('proj-1');
+    expect(m.inOrder[1].slug).toBeNull();
+  });
+
   it('lit30 is clamped like the attestation field; mixed nights and empty batches are refused', () => {
     const m = buildNightManifest([entry(1, { lit30: 70_000 }), entry(2, { lit30: -3 })], 7n);
     expect(m.manifest.leaves.map((l) => l.lit30).sort((x, y) => x - y)).toEqual([0, 65_535]);

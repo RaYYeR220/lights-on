@@ -61,6 +61,15 @@ describe('NightDrawer proof section', () => {
     expect(html).toContain(`attested in tx <code>${P('0d').slice(0, 10)}…${P('0d').slice(-6)}</code>`);
     expect(html).toContain(`href="/api/v1/manifest/${P('0f')}"`);
     expect(html).toContain('View night manifest');
+    expect(html).toContain('Lit30 in the leaf');
+    expect(html).toContain('4 of the last 30 nights');
+    expect(html).not.toContain('awaiting confirmation');
+  });
+  it('a tx without a uid yet is sent, awaiting confirmation, never "attested"', () => {
+    const pending = { ...night, attestationUid: null };
+    const html = renderToStaticMarkup(createElement(NightDrawer, { slug: 'rc', night: pending, watcher: null, onClose: () => undefined }));
+    expect(html).toContain(`sent in tx <code>${P('0d').slice(0, 10)}…${P('0d').slice(-6)}</code>, awaiting confirmation`);
+    expect(html).not.toContain('attested in tx');
   });
   it('a reconstructed night shows neither', () => {
     const rec = { ...night, observed: false, attestationUid: null, attestTx: null, attestProof: null, attestRoot: null, attestLit30: null, manifestHash: null };

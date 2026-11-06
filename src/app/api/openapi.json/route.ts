@@ -218,7 +218,8 @@ export function GET(): Response {
                     items: {
                       type: 'object',
                       properties: {
-                        slug: { type: 'string' }, projectKey: { type: 'string' }, night: yyyymmdd, kind: { const: 0 }, status,
+                        slug: { type: ['string', 'null'], description: 'null for an unlisted (community-added or hidden) project' },
+                        projectKey: { type: 'string', description: 'keccak256 of the slug' }, night: yyyymmdd, kind: { const: 0 }, status,
                         statusCode: { type: 'integer', minimum: 1, maximum: 5 }, lit30: { type: 'integer' },
                         evidenceHash: { type: 'string' }, leaf: { type: 'string' },
                       },

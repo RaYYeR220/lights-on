@@ -186,7 +186,7 @@ describe('getNightView', () => {
     expect([...html.matchAll(/href="https:\/\/basescan\.org\/tx\/([^"]+)"/g)].map((m) => m[1])).toEqual([TXA]);
     expect(html).toContain(`href="/api/v1/manifest/${MANIFEST}"`);
     expect(html).toContain('View night manifest');
-    expect(html).toContain('One root attestation for 2 projects');
+    expect(html).toContain('One root attestation for 2 project-nights');
     expect(html).not.toContain('multiAttest');
   });
 

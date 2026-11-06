@@ -125,6 +125,40 @@ describe('verifyNight, root mode (nightly)', () => {
     }
   });
 
+  it('an unlisted project (slug null in the manifest) still verifies from its bundle, through its projectKey', async () => {
+    const b = bundle('secret-watch');
+    const m = buildNightManifest([
+      { slug: 'alpha', night: 20261106, status: 'shipped', lit30: 1, evidenceHash: hashEvidence(bundle('alpha')) },
+      { slug: 'secret-watch', night: 20261106, status: 'quiet', lit30: 0, evidenceHash: hashEvidence(b), listed: false },
+    ], 7n);
+    expect(m.manifest.leaves.some((l) => l.slug === 'secret-watch')).toBe(false);
+    const a = att('root-u', rootSchemaUid(), encodeRoot({ root: m.root, night: 20261106, count: 2, agentId: 7n, manifestURI: `https://x.test/api/v1/manifest/${m.hash}` }));
+    const leaf = m.inOrder[1].leaf;
+    expect(m.manifest.leaves.find((l) => l.leaf === leaf)?.projectKey).toBe(keccak256(toBytes('secret-watch')));
+    const r = await verifyNight(a.uid, b, chain([a]), [WATCHER], { row: { status: 'quiet', lit30: 0, proof: m.proofs.get(leaf)! } });
+    expect(r.match).toBe(true);
+  });
+
+  it('a row lit30 outside uint16 or not an integer is rejected, never clamped into a match', async () => {
+    const b = bundle('alpha');
+    const m = buildNightManifest([
+      { slug: 'alpha', night: 20261106, status: 'shipped', lit30: 65_535, evidenceHash: hashEvidence(b) },
+      { slug: 'beta', night: 20261106, status: 'quiet', lit30: 0, evidenceHash: hashEvidence(bundle('beta')) },
+    ], 7n);
+    const a = att('root-l', rootSchemaUid(), encodeRoot({ root: m.root, night: 20261106, count: 2, agentId: 7n, manifestURI: 'https://x.test/m' }));
+    const c = chain([a]);
+    const proofA = m.proofs.get(m.inOrder[0].leaf)!;
+    const proofB = m.proofs.get(m.inOrder[1].leaf)!;
+    expect((await verifyNight(a.uid, b, c, [WATCHER], { row: { status: 'shipped', lit30: 65_535, proof: proofA } })).match).toBe(true);
+    for (const lit30 of [70_000, 65_536, 1.5, Number.NaN]) {
+      const r = await verifyNight(a.uid, b, c, [WATCHER], { row: { status: 'shipped', lit30, proof: proofA } });
+      expect(r.match).toBe(false);
+      expect(r.checks).toMatchObject({ proof: false });
+    }
+    const r = await verifyNight(a.uid, bundle('beta'), c, [WATCHER], { row: { status: 'quiet', lit30: -1, proof: proofB } });
+    expect(r.match).toBe(false); // -1 would clamp to the committed 0
+  });
+
   it('a missing uid or junk data never matches and never throws', async () => {
     const t = night(20261106, 'root-a');
     const row = t.rows[0];

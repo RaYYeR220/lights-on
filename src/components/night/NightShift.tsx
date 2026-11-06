@@ -86,7 +86,7 @@ export function NightShift({ view, asked, now }: { view: NightView; asked: numbe
                 view.attestations.map((a) => (
                   <span key={a.tx} className={s.root} data-testid="night-root">
                     <a className="ul" href={`https://basescan.org/tx/${a.tx}`} target="_blank" rel="noreferrer">
-                      {a.count ? `One root attestation for ${a.count} project${a.count === 1 ? "" : "s"}` : "Root attestation"} · tx {short(a.tx)}
+                      {a.count ? `One root attestation for ${a.count} project-night${a.count === 1 ? "" : "s"}` : "Root attestation"} · tx {short(a.tx)}
                     </a>
                     {a.manifest ? (
                       <a className="ul" href={`/api/v1/manifest/${a.manifest}`} target="_blank" rel="noreferrer">

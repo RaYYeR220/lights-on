@@ -276,8 +276,15 @@ function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; 
                     <dt>Merkle proof</dt>
                     <dd data-testid="merkle-proof">
                       {n.attestProof.length} step{n.attestProof.length === 1 ? "" : "s"} → root <code>{short(n.attestRoot)}</code>
-                      {n.attestTx ? <> attested in tx <code>{short(n.attestTx)}</code></> : null}
+                      {n.attestTx && n.attestationUid ? <> attested in tx <code>{short(n.attestTx)}</code></> : null}
+                      {n.attestTx && !n.attestationUid ? <>, sent in tx <code>{short(n.attestTx)}</code>, awaiting confirmation</> : null}
                     </dd>
+                  </>
+                ) : null}
+                {n.attestLit30 !== null ? (
+                  <>
+                    <dt>Lit30 in the leaf</dt>
+                    <dd data-testid="leaf-lit30">{n.attestLit30} of the last 30 nights</dd>
                   </>
                 ) : null}
                 {n.manifestHash ? (

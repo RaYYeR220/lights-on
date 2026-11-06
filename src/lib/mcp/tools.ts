@@ -215,12 +215,20 @@ export async function isStillShipping(db: Db, slug: string, now: Date = new Date
     lit30: record.lit30,
     lastShip: record.lastShip,
     lastNight: head ? nightOf(head.night) : null,
+    /** The head night's ROOT attestation: one per batch of up to 500 project-nights (null until it is confirmed). */
     attestationUid: head?.attestationUid ?? null,
-    /** Merkle proof of this project-night into the root attestation above (null before it is attested). */
+    /**
+     * Everything needed to rebuild the head night's leaf and fold it into that root: the leaf's lit30 and evidence hash
+     * (with keccak256(slug), lastNight and status), the leaf itself, and the proof. Written with the tx before it is
+     * sent, so they can precede attestationUid; null for a reconstructed or not yet attested night.
+     */
     proof: head?.attestProof ?? null,
+    attestLeaf: head?.attestLeaf ?? null,
+    attestLit30: head?.attestLit30 ?? null,
+    evidenceHash: head?.evidenceHash ?? null,
     manifestUri: manifestUri(head?.attestManifest ?? null),
     verifiedBy: VERIFIED_BY,
-    /** The nightly root schema: attestationUid is one attestation per night covering every project. */
+    /** The nightly root schema, which attestationUid is made under. */
     schemaUid: rootSchemaUid(),
   };
 }

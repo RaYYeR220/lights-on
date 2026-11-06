@@ -50,7 +50,11 @@ export function buildTree(leaves: Hex[]): { root: Hex; proofs: Map<Hex, Hex[]> }
   return { root: nodes[0], proofs };
 }
 
-/** True iff folding `proof` into `leaf` with sorted-pair hashing gives `root`. Never throws (junk input is false). */
+/**
+ * True iff folding `proof` into `leaf` with sorted-pair hashing gives `root`. Never throws (junk input is false).
+ * It proves only that `leaf` is in the tree: callers must pass a leaf they rebuilt from its preimage (nightLeaf over
+ * the fields they are checking), never a leaf value taken from the same untrusted source as the proof.
+ */
 export function verifyProof(leaf: Hex, proof: readonly Hex[], root: Hex): boolean {
   if (typeof leaf !== 'string' || !WORD.test(leaf) || typeof root !== 'string' || !WORD.test(root) || !Array.isArray(proof)) return false;
   let h = lc(leaf);
