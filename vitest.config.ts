@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    exclude: ['tests/fork/**', 'node_modules/**'],
     coverage: { provider: 'v8' },
   },
 });
