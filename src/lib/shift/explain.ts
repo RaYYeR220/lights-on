@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Decision, EvidenceBundle, Status } from '@/lib/types';
-import { veniceJSON, veniceText, type FetchLike } from '@/lib/ai/venice';
+import { veniceJSON, veniceText, type FetchLike, type VeniceUsage } from '@/lib/ai/venice';
 import {
   CLASSIFY_JSON_SCHEMA, CLASSIFY_SYSTEM, EXPLAIN_SYSTEM, MODEL_CLASSIFY, MODEL_EXPLAIN, UNTRUSTED_CLOSE, UNTRUSTED_OPEN,
 } from '@/lib/ai/prompts';
@@ -12,7 +12,13 @@ export interface Explanation {
   notable: string[];
   aiSubstance: AiSubstance | null;
   model: string | null;
+  /** Reported usage of the calls made (failed calls included when the API reported usage). */
   tokens: number;
+  /**
+   * Reservation provably unused: whole reservations of calls never made, plus (reserved - used) of calls that
+   * succeeded with a reported usage. A failed call, or one without a usage figure, refunds nothing.
+   */
+  refundable: number;
 }
 export interface ExplainDeps {
   budget: (n: number) => Promise<boolean>;
@@ -128,25 +134,33 @@ const est = (chars: number) => Math.ceil(chars / 4);
 
 /** Explains an already-decided night. Never changes the status; any failure -> aiOk false, summary null. */
 export async function explainNight(b: EvidenceBundle, d: Decision, deps: ExplainDeps): Promise<Explanation> {
-  const fail = (tokens: number, model: string | null): Explanation => ({ aiOk: false, summary: null, notable: [], aiSubstance: null, model, tokens });
+  let tokens = 0;
+  let refundable = 0;
+  /** Book one call against its reservation (see Explanation.refundable). */
+  const book = (reserved: number, r: VeniceUsage & { ok: boolean }) => {
+    if (r.tokens !== null) tokens += r.tokens;
+    if (!r.sent) refundable += reserved;
+    else if (r.ok && r.tokens !== null) refundable += Math.max(0, reserved - r.tokens);
+  };
+  const fail = (model: string | null): Explanation => ({ aiOk: false, summary: null, notable: [], aiSubstance: null, model, tokens, refundable });
   const input = buildInput(b, d);
 
   if (input.empty) {
-    return { aiOk: true, summary: sanitizeSummary(TEMPLATES[d.status]), notable: [], aiSubstance: null, model: null, tokens: 0 };
+    return { aiOk: true, summary: sanitizeSummary(TEMPLATES[d.status]), notable: [], aiSubstance: null, model: null, tokens: 0, refundable: 0 };
   }
 
-  let tokens = 0;
   const net = { fetchImpl: deps.fetchImpl, apiKey: deps.apiKey };
 
   const classifyUser = `Items to classify:\n${input.text}`;
-  if (!(await deps.budget(CLASSIFY_MAX_TOKENS + est(CLASSIFY_SYSTEM.length + classifyUser.length)))) return fail(0, null);
+  const clsReserve = CLASSIFY_MAX_TOKENS + est(CLASSIFY_SYSTEM.length + classifyUser.length);
+  if (!(await deps.budget(clsReserve))) return fail(null);
   const cls = await veniceJSON({
     model: MODEL_CLASSIFY, system: CLASSIFY_SYSTEM, user: classifyUser,
     schema: ClassifySchema, jsonSchema: CLASSIFY_JSON_SCHEMA, schemaName: 'classification',
     maxTokens: CLASSIFY_MAX_TOKENS, timeoutMs: 20_000, ...net,
   });
-  if (!cls.ok) return fail(tokens, null);
-  tokens += cls.tokens;
+  book(clsReserve, cls);
+  if (!cls.ok) return fail(null);
   const notable = cls.data.notable
     .map((n) => sanitizeSummary(n))
     .map((n) => (n === null ? null : sanitizeSummary(cutAtWord(n, MAX_NOTABLE_CHARS)))) // truncate first, then sanitize the final string
@@ -163,15 +177,16 @@ export async function explainNight(b: EvidenceBundle, d: Decision, deps: Explain
   }
   const kinds = Object.entries(counts).map(([k, n]) => `${k}=${n}`).join(', ') || 'none';
   const explainUser = `${input.text}\n\nClassification: ${kinds}; substance=${cls.data.ai_substance}`;
-  if (!(await deps.budget(EXPLAIN_MAX_TOKENS + est(EXPLAIN_SYSTEM.length + explainUser.length)))) return fail(tokens, null);
+  const expReserve = EXPLAIN_MAX_TOKENS + est(EXPLAIN_SYSTEM.length + explainUser.length);
+  if (!(await deps.budget(expReserve))) return fail(null);
   const exp = await veniceText({
     model: MODEL_EXPLAIN, system: EXPLAIN_SYSTEM, user: explainUser,
     maxTokens: EXPLAIN_MAX_TOKENS, timeoutMs: 20_000, ...net,
   });
-  if (!exp.ok) return fail(tokens, null);
-  tokens += exp.tokens;
+  book(expReserve, exp);
+  if (!exp.ok) return fail(null);
   const summary = sanitizeSummary(exp.text);
-  if (!summary) return fail(tokens, MODEL_EXPLAIN);
+  if (!summary) return fail(MODEL_EXPLAIN);
 
-  return { aiOk: true, summary, notable, aiSubstance: cls.data.ai_substance, model: MODEL_EXPLAIN, tokens };
+  return { aiOk: true, summary, notable, aiSubstance: cls.data.ai_substance, model: MODEL_EXPLAIN, tokens, refundable };
 }

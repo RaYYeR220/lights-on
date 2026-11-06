@@ -19,7 +19,7 @@ export interface NightAttestation {
  * its fate must then be settled from the receipt, never by sending the same attestations again.
  * `error: 'reverted'` with a txHash = confirmed revert (receipt status reverted).
  */
-export type Skipped = { skipped: 'gas_cap' | 'disabled' | 'error'; error?: string; txHash?: Hex };
+export type Skipped = { skipped: 'gas_cap' | 'disabled' | 'error'; error?: string; txHash?: Hex; nonce?: number };
 
 export interface AttestDeps {
   wallet: WalletClient<Transport, Chain | undefined, Account> | null;
@@ -32,8 +32,13 @@ export interface AttestDeps {
    * Estimate/fee-read failures happen before anything is reserved, so they need no release.
    */
   release?: (weiAmount: bigint) => Promise<void>;
-  /** Called right after broadcast, before the receipt wait, so the caller can persist the hash. Errors are ignored. */
-  onBroadcast?: (txHash: Hex) => Promise<void>;
+  /**
+   * Called right after broadcast, before the receipt wait, with the hash and the nonce it was signed with, so the
+   * caller can persist both. Errors are ignored.
+   */
+  onBroadcast?: (txHash: Hex, nonce: number) => Promise<void>;
+  /** Receipt wait; default RECEIPT_TIMEOUT_MS. */
+  receiptTimeoutMs?: number;
 }
 
 /** Receipt wait before giving up (the tx hash is returned, so nothing is lost). */
@@ -74,10 +79,11 @@ type Logs = readonly { address: string; topics: readonly Hex[]; data: Hex }[];
 async function send(
   call: { functionName: 'attest' | 'multiAttest'; args: unknown },
   deps: AttestDeps,
-): Promise<{ txHash: Hex; logs: Logs } | Skipped> {
+): Promise<{ txHash: Hex; nonce: number; logs: Logs } | Skipped> {
   const { wallet, publicClient } = deps;
   if (!wallet) return { skipped: 'disabled' };
   let txHash: Hex | undefined;
+  let nonce: number | undefined;
   try {
     const base = { address: EAS_ADDRESS, abi: easAbi, account: wallet.account, ...call } as never;
     const estimate = await publicClient.estimateContractGas(base);
@@ -86,21 +92,24 @@ async function send(
     if (block.baseFeePerGas == null) return { skipped: 'error', error: 'error' };
     const tipEstimate = await publicClient.estimateMaxPriorityFeePerGas();
     const { maxFeePerGas, maxPriorityFeePerGas } = computeFees(block.baseFeePerGas, tipEstimate);
+    // Explicit nonce, so a tx that is never found can later be proven unmineable (a later tx consumed its nonce).
+    const n = await publicClient.getTransactionCount({ address: wallet.account.address, blockTag: 'pending' });
     const reserved = gas * maxFeePerGas;
     if (!(await deps.budget(reserved))) return { skipped: 'gas_cap' };
     try {
-      txHash = await wallet.writeContract({ ...(base as object), chain: wallet.chain, gas, maxFeePerGas, maxPriorityFeePerGas } as never);
+      txHash = await wallet.writeContract({ ...(base as object), chain: wallet.chain, gas, maxFeePerGas, maxPriorityFeePerGas, nonce: n } as never);
     } catch (e) {
       await deps.release?.(reserved).catch(() => undefined); // never broadcast: refund
       return { skipped: 'error', error: safeErrorCode(e) };
     }
     const sent = txHash;
-    await deps.onBroadcast?.(sent).catch(() => undefined);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: sent, timeout: RECEIPT_TIMEOUT_MS });
-    if (receipt.status !== 'success') return { skipped: 'error', error: 'reverted', txHash: sent };
-    return { txHash: sent, logs: receipt.logs as unknown as Logs };
+    nonce = n;
+    await deps.onBroadcast?.(sent, n).catch(() => undefined);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: sent, timeout: deps.receiptTimeoutMs ?? RECEIPT_TIMEOUT_MS });
+    if (receipt.status !== 'success') return { skipped: 'error', error: 'reverted', txHash: sent, nonce: n };
+    return { txHash: sent, nonce: n, logs: receipt.logs as unknown as Logs };
   } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e), ...(txHash ? { txHash } : {}) };
+    return { skipped: 'error', error: safeErrorCode(e), ...(txHash ? { txHash } : {}), ...(nonce !== undefined ? { nonce } : {}) };
   }
 }
 
@@ -114,10 +123,10 @@ export async function attestOne(n: NightAttestation, deps: AttestDeps): Promise<
   if ('skipped' in r) return r;
   try {
     const [uid] = uidsFrom(r.logs);
-    if (!uid) return { skipped: 'error', error: 'no_attested_log', txHash: r.txHash };
+    if (!uid) return { skipped: 'error', error: 'no_attested_log', txHash: r.txHash, nonce: r.nonce };
     return { uid, txHash: r.txHash };
   } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash };
+    return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash, nonce: r.nonce };
   }
 }
 
@@ -127,31 +136,55 @@ export async function attestMany(ns: NightAttestation[], deps: AttestDeps): Prom
   if ('skipped' in r) return r;
   try {
     const uids = uidsFrom(r.logs);
-    if (uids.length !== ns.length) return { skipped: 'error', error: 'uid_count_mismatch', txHash: r.txHash };
+    if (uids.length !== ns.length) return { skipped: 'error', error: 'uid_count_mismatch', txHash: r.txHash, nonce: r.nonce };
     return { uids, txHash: r.txHash };
   } catch (e) {
-    return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash };
+    return { skipped: 'error', error: safeErrorCode(e), txHash: r.txHash, nonce: r.nonce };
   }
 }
 
+/**
+ * Fate of a broadcast attestation tx.
+ *  success  - mined; uids of the EAS `Attested` logs in log order (= request order for multiAttest)
+ *  reverted - mined, reverted: nothing attested
+ *  dropped  - no receipt AND the sender's mined tx count is past the tx nonce: another tx used the nonce, ours can
+ *             never mine
+ *  pending  - no receipt and the nonce is still open (or unknown): may still mine, so keep waiting
+ *  error    - RPC failure: decide nothing
+ */
 export type AttestReceipt =
   | { status: 'success'; uids: Hex[] }
   | { status: 'reverted' }
-  | { status: 'not_found' }
+  | { status: 'pending' }
+  | { status: 'dropped' }
   | { status: 'error'; error: string };
 
+const notFound = (e: unknown) => {
+  const named = (x: unknown) => (x as { name?: unknown } | null)?.name === 'TransactionReceiptNotFoundError';
+  return named(e) || named((e as { cause?: unknown } | null)?.cause);
+};
+
 /**
- * Settle a broadcast attestation tx from its receipt: the EAS `Attested` uids in log order (= request order for
- * multiAttest), a confirmed revert, or not found (pending or dropped). Never throws.
+ * Settle a broadcast tx. The sender's `latest` tx count is read BEFORE the receipt: if the nonce was already consumed
+ * then and the receipt is still missing afterwards, the consuming tx was not ours. Never throws.
  */
-export async function attestationReceipt(txHash: Hex, publicClient: Pick<AnyPublicClient, 'getTransactionReceipt'>): Promise<AttestReceipt> {
+export async function attestationStatus(
+  txHash: Hex,
+  nonce: number | null,
+  sender: Address | null,
+  publicClient: Pick<AnyPublicClient, 'getTransactionReceipt' | 'getTransactionCount'>,
+): Promise<AttestReceipt> {
   try {
-    const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
-    if (receipt.status !== 'success') return { status: 'reverted' };
-    return { status: 'success', uids: uidsFrom(receipt.logs as unknown as Logs) };
+    const mined = nonce !== null && sender ? await publicClient.getTransactionCount({ address: sender, blockTag: 'latest' }) : null;
+    try {
+      const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') return { status: 'reverted' };
+      return { status: 'success', uids: uidsFrom(receipt.logs as unknown as Logs) };
+    } catch (e) {
+      if (!notFound(e)) throw e;
+      return mined !== null && nonce !== null && mined > nonce ? { status: 'dropped' } : { status: 'pending' };
+    }
   } catch (e) {
-    const named = (x: unknown) => (x as { name?: unknown } | null)?.name === 'TransactionReceiptNotFoundError';
-    if (named(e) || named((e as { cause?: unknown } | null)?.cause)) return { status: 'not_found' };
     return { status: 'error', error: safeErrorCode(e) };
   }
 }

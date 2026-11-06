@@ -256,52 +256,64 @@ export async function listStaleShifts(db: Db, now: Date, staleMs: number): Promi
     .limit(5);
 }
 
-/** Retry lease for a finished shift: true for one caller per staleMs window (moves finished_at to now). */
-export async function leaseStaleShift(db: Db, shiftId: number, now: Date, cutoff: Date): Promise<boolean> {
+/** One finalize pass at a time per shift: true for exactly one caller until the lease runs out. */
+export async function leaseShift(db: Db, shiftId: number, now: Date, ms: number): Promise<boolean> {
   const rows = await db
     .update(shifts)
-    .set({ finishedAt: now })
-    .where(and(eq(shifts.id, shiftId), isNotNull(shifts.finishedAt), lt(shifts.finishedAt, cutoff)))
+    .set({ leaseUntil: new Date(now.getTime() + ms) })
+    .where(and(eq(shifts.id, shiftId), or(isNull(shifts.leaseUntil), lte(shifts.leaseUntil, now))))
     .returning({ id: shifts.id });
   return rows.length > 0;
 }
 
 // ---- attestation claims (Neon HTTP has no transactions: single statements only) ----
+// A claim is a token (attest_claim_id, a fresh uuid per claim statement). Every later write to claimed rows presents
+// it, so a pass can only ever touch rows it claimed itself, never a newer claim of another pass.
 
-/** Atomically claim every unattested, unclaimed observed night of a shift. Each row goes to exactly one caller. */
-export async function claimShiftNights(db: Db, shiftId: number, at: Date): Promise<NightRow[]> {
-  return db
+const claimable = (shiftId: number) => and(
+  eq(nights.shiftId, shiftId),
+  eq(nights.observed, true),
+  isNull(nights.attestationUid),
+  isNull(nights.attestClaimedAt),
+  isNotNull(nights.evidenceHash),
+);
+
+/** Atomically claim up to `limit` claimable nights of a shift (lowest ids first) under `claimId`. Each row goes to one caller. */
+export async function claimShiftNights(db: Db, shiftId: number, at: Date, claimId: string, limit: number): Promise<NightRow[]> {
+  const ids = db.select({ id: nights.id }).from(nights).where(claimable(shiftId)).orderBy(asc(nights.id)).limit(limit);
+  const rows = await db
     .update(nights)
-    .set({ attestClaimedAt: at })
-    .where(and(
-      eq(nights.shiftId, shiftId),
-      eq(nights.observed, true),
-      isNull(nights.attestationUid),
-      isNull(nights.attestClaimedAt),
-      isNotNull(nights.evidenceHash),
-    ))
+    .set({ attestClaimedAt: at, attestClaimId: claimId })
+    .where(and(inArray(nights.id, ids), claimable(shiftId)))
     .returning();
+  return rows.sort((a, b) => a.id - b.id);
 }
 
 /**
- * Give claimed-but-unattested rows back (and forget any tx on them) so a later finalize can retry them. Only for rows
- * whose batch was never broadcast, or whose tx reverted or was dropped.
+ * Give claimed-but-unattested rows back (forgetting any tx/nonce) so a later pass can retry them. Only rows still held
+ * under `claimId` (and, from a reconcile, still carrying the checked `tx`) are touched. Only for batches that were
+ * never broadcast, or whose tx reverted or can no longer mine.
  */
-export async function releaseNightClaims(db: Db, ids: number[]): Promise<void> {
+export async function releaseNightClaims(db: Db, ids: number[], claimId: string, tx?: string): Promise<void> {
   if (ids.length === 0) return;
   await db
     .update(nights)
-    .set({ attestClaimedAt: null, attestTx: null })
-    .where(and(inArray(nights.id, ids), isNull(nights.attestationUid)));
+    .set({ attestClaimedAt: null, attestClaimId: null, attestTx: null, attestNonce: null })
+    .where(and(
+      inArray(nights.id, ids),
+      isNull(nights.attestationUid),
+      eq(nights.attestClaimId, claimId),
+      ...(tx !== undefined ? [eq(nights.attestTx, tx)] : []),
+    ));
 }
 
-/** Record the broadcast tx on a claimed batch whose outcome is not known yet (reconciled from the receipt later). */
-export async function markNightsBroadcast(db: Db, ids: number[], tx: string): Promise<void> {
+/** Record the broadcast tx (+ nonce) on our claimed batch whose outcome is not known yet. */
+export async function markNightsBroadcast(db: Db, ids: number[], claimId: string, tx: string, nonce: number | null): Promise<void> {
   if (ids.length === 0) return;
   await db
     .update(nights)
-    .set({ attestTx: tx })
-    .where(and(inArray(nights.id, ids), isNull(nights.attestationUid), isNotNull(nights.attestClaimedAt)));
+    .set({ attestTx: tx, attestNonce: nonce })
+    .where(and(inArray(nights.id, ids), isNull(nights.attestationUid), eq(nights.attestClaimId, claimId)));
 }
 
 /** Claimed rows of a shift with a broadcast tx but no uid yet, in batch order (id ascending). */
@@ -312,20 +324,26 @@ export async function listUnconfirmedBroadcasts(db: Db, shiftId: number): Promis
     .where(and(
       eq(nights.shiftId, shiftId),
       isNull(nights.attestationUid),
-      isNotNull(nights.attestClaimedAt),
+      isNotNull(nights.attestClaimId),
       isNotNull(nights.attestTx),
     ))
     .orderBy(asc(nights.id));
 }
 
-/** Write UIDs (and the tx) for claimed rows in one statement. Never overwrites an existing UID. */
-export async function setNightAttestations(db: Db, rows: { id: number; uid: string }[], tx: string): Promise<void> {
+/**
+ * Write UIDs (and the tx) for rows held under `claimId`, in one statement. Never overwrites a UID, and never writes
+ * over a different tx than the one these uids came from.
+ */
+export async function setNightAttestations(
+  db: Db, rows: { id: number; uid: string }[], tx: string, claimId: string,
+): Promise<void> {
   if (rows.length === 0) return;
   const values = sql.join(rows.map((r) => sql`(${r.id}::int, ${r.uid}::text)`), sql`, `);
   await db.execute(sql`
     UPDATE nights AS n SET attestation_uid = v.uid, attest_tx = ${tx}
     FROM (VALUES ${values}) AS v(id, uid)
-    WHERE n.id = v.id AND n.attestation_uid IS NULL`);
+    WHERE n.id = v.id AND n.attestation_uid IS NULL AND n.attest_claim_id = ${claimId}
+      AND (n.attest_tx IS NULL OR n.attest_tx = ${tx})`);
 }
 
 export async function countUnattested(db: Db, shiftId: number): Promise<number> {

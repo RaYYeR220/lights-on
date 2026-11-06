@@ -220,3 +220,54 @@ describe('sanitizeSummary', () => {
     }
   });
 });
+
+describe('explain refunds (strict: fail closed)', () => {
+  const recorder = () => {
+    const calls: number[] = [];
+    return { calls, budget: async (n: number) => { calls.push(n); return true; } };
+  };
+  const noUsage = (content: string) => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content } }] }) });
+
+  it('calls that succeed with a reported usage refund reserved - used', async () => {
+    const b = recorder();
+    const r = await explainNight(bundle(), decideStatus(bundle()), deps(seq(reply(CLS, 40), reply('A feature was added to the code.', 60)), b.budget));
+    expect(b.calls).toHaveLength(2);
+    expect(r).toMatchObject({ aiOk: true, tokens: 100, refundable: b.calls[0] - 40 + b.calls[1] - 60 });
+  });
+
+  it('a call without a usage figure counts as having used its whole reservation', async () => {
+    const b = recorder();
+    const r = await explainNight(bundle(), decideStatus(bundle()), deps(seq(noUsage(CLS), reply('A feature was added to the code.', 60)), b.budget));
+    expect(r).toMatchObject({ aiOk: true, tokens: 60, refundable: b.calls[1] - 60 });
+  });
+
+  it('failed calls keep their whole reservation; usage reported on a schema failure is still counted', async () => {
+    const http500 = { ok: false, status: 500, text: async () => '' };
+    const b1 = recorder();
+    expect(await explainNight(bundle(), decideStatus(bundle()), deps(seq(http500), b1.budget))).toMatchObject({ aiOk: false, tokens: 0, refundable: 0 });
+    const b2 = recorder();
+    expect(await explainNight(bundle(), decideStatus(bundle()), deps(seq(reply('{"nope":1}', 40)), b2.budget)))
+      .toMatchObject({ aiOk: false, tokens: 40, refundable: 0 });
+    const b3 = recorder();
+    const timeout = vi.fn().mockRejectedValue(Object.assign(new Error('x'), { name: 'TimeoutError' }));
+    expect(await explainNight(bundle(), decideStatus(bundle()), deps(timeout, b3.budget))).toMatchObject({ aiOk: false, refundable: 0 });
+    // second call fails after a good first one: only the first call refunds
+    const b4 = recorder();
+    const r4 = await explainNight(bundle(), decideStatus(bundle()), deps(seq(reply(CLS, 40), http500), b4.budget));
+    expect(r4).toMatchObject({ aiOk: false, tokens: 40, refundable: b4.calls[0] - 40 });
+  });
+
+  it('a call never made (no key) refunds its whole reservation', async () => {
+    const saved = process.env.VENICE_API_KEY;
+    delete process.env.VENICE_API_KEY;
+    try {
+      const b = recorder();
+      const f = vi.fn();
+      const r = await explainNight(bundle(), decideStatus(bundle()), { budget: b.budget, fetchImpl: f as never });
+      expect(f).not.toHaveBeenCalled();
+      expect(r).toMatchObject({ aiOk: false, tokens: 0, refundable: b.calls[0] });
+    } finally {
+      if (saved !== undefined) process.env.VENICE_API_KEY = saved;
+    }
+  });
+});

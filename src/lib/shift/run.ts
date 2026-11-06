@@ -44,6 +44,8 @@ export interface RunResult {
 }
 
 const MAX_SNAPSHOT_TEXT = 200_000;
+/** The live stream should not hang on a slow receipt; the tx is already stored. */
+export const LIVE_RECEIPT_TIMEOUT_MS = 30_000;
 const DAY_MS = 86_400_000;
 
 /** JSON-safe deep copy: what is hashed is exactly what jsonb stores (NaN -> null, undefined dropped, NUL stripped). */
@@ -211,7 +213,11 @@ async function gather(
   };
 }
 
-/** Explain within the LLM caps; afterwards the unused part of the reservations (reserved - used) is refunded. */
+/**
+ * Explain within the LLM caps. Afterwards only what explain proves unused is refunded (`refundable`: calls never made,
+ * or made with a reported usage below their reservation); a failed call or a missing usage figure keeps its whole
+ * reservation, and so does an explain that throws.
+ */
 async function safeExplain(b: EvidenceBundle, d: Decision, deps: ShiftDeps): Promise<Explanation> {
   let reserved = 0;
   const budget = async (n: number) => {
@@ -223,10 +229,10 @@ async function safeExplain(b: EvidenceBundle, d: Decision, deps: ShiftDeps): Pro
   try {
     ex = await deps.explain(b, d, { budget });
   } catch {
-    ex = { aiOk: false, summary: null, notable: [], aiSubstance: null, model: null, tokens: 0 };
+    return { aiOk: false, summary: null, notable: [], aiSubstance: null, model: null, tokens: 0, refundable: 0 };
   }
-  const unused = reserved - Math.max(0, Math.ceil(ex.tokens || 0));
-  if (unused > 0) await deps.release?.('llm_tokens', unused)?.catch(() => undefined);
+  const refund = Math.min(reserved, Math.max(0, Math.floor(ex.refundable ?? 0)));
+  if (refund > 0) await deps.release?.('llm_tokens', refund)?.catch(() => undefined);
   return ex;
 }
 
@@ -368,9 +374,12 @@ export async function runProject(
       outcome = { skipped: 'disabled' }; // no registered watcher identity: never attest agentId 0
     } else {
       let sent: Hex | undefined;
-      const onBroadcast = async (h: Hex) => { sent = h; };
+      const onBroadcast = async (h: Hex) => {
+        sent = h;
+        await updateLiveRun(db, liveRunId!, { tx: h }); // persisted before the receipt wait
+      };
       try {
-        const r = await deps.attest(att, attestDepsFor(deps, onBroadcast));
+        const r = await deps.attest(att, attestDepsFor(deps, onBroadcast, { receiptTimeoutMs: LIVE_RECEIPT_TIMEOUT_MS }));
         if ('skipped' in r) {
           const tx = r.txHash ?? sent;
           outcome = { skipped: r.skipped, ...(r.error ? { error: r.error } : {}), ...(tx ? { txHash: tx } : {}) };
@@ -437,8 +446,9 @@ export async function runShiftProject(
       await finalizeShift(shiftId, deps);
       finalized = true;
     } catch (e) {
-      // finalizeShift handles its own failures (status attest_pending); this only catches a dead DB. The shift is then
-      // still unfinished, so a later stale pass (dispatch or run route) picks it up after 45 min.
+      // finalizeShift handles its own failures (status attest_pending); this only catches a dead DB. The shift then stays
+      // unfinished and is recovered by a stale pass: the 05:00 UTC dispatch (after()), the 06:00 UTC finalize-stale
+      // cron, or the after() of a later /api/shift/run.
       console.error('shift.finalize failed:', safeErrorCode(e));
     }
   }

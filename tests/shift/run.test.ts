@@ -11,8 +11,9 @@ import {
 import { runProject, runShiftProject, liveWindow } from '@/lib/shift/run';
 import { nightlyWindow, shiftStartFor, nightNumber } from '@/lib/shift/night';
 import { hashEvidence } from '@/lib/shift/evidence';
-import { encodeNight, type NightAttestation } from '@/lib/attest/eas';
+import { encodeNight, type AttestDeps, type NightAttestation } from '@/lib/attest/eas';
 import type { Step } from '@/lib/types';
+import type { Hex } from 'viem';
 
 let db: Db;
 beforeEach(async () => { db = await makeTestDb(); });
@@ -257,22 +258,54 @@ describe('runProject (live)', () => {
     expect(steps.at(-1)?.detail).toMatch(/^sent, not confirmed yet · tx 0xcdcdcdcd/);
   });
 
-  it('refunds the unused LLM reservation after explain', async () => {
+  it('refunds only what explain proves unused; a throwing explain keeps its whole reservation', async () => {
     const p = await seedProject(db, 'alpha');
     const day = '2026-11-06';
-    const explain = vi.fn(async (_b: unknown, _d: unknown, x: { budget: (n: number) => Promise<boolean> }) => {
-      await x.budget(1000);
-      await x.budget(500);
-      return { aiOk: true, summary: 'Code changes landed.', notable: [], aiSubstance: null, model: 'm', tokens: 300 };
-    });
-    const { deps } = makeDeps(db, {
+    const llm = async () => ((await db.execute(`select llm_tokens::text as t from budget where day='${day}'` as never)).rows[0] as { t: string }).t;
+    const budgeted = (explain: unknown) => makeDeps(db, {
       explain: explain as never,
       budget: (f, n) => bumpBudget(db, day, f, n, 1e9),
       release: (f, n) => releaseBudget(db, day, f, n),
+    }).deps;
+    const reserve = async (x: { budget: (n: number) => Promise<boolean> }) => { await x.budget(1000); await x.budget(500); };
+
+    await runProject(p.id, 'nightly', WINDOW, budgeted(vi.fn(async (_b: unknown, _d: unknown, x: { budget: (n: number) => Promise<boolean> }) => {
+      await reserve(x);
+      return { aiOk: true, summary: 'Code changes landed.', notable: [], aiSubstance: null, model: 'm', tokens: 300, refundable: 1200 };
+    })));
+    expect(await llm()).toBe('300');
+
+    const q = await seedProject(db, 'beta');
+    await runProject(q.id, 'nightly', WINDOW, budgeted(vi.fn(async (_b: unknown, _d: unknown, x: { budget: (n: number) => Promise<boolean> }) => {
+      await reserve(x);
+      throw new Error('boom');
+    })));
+    expect(await llm()).toBe('1800'); // + the full 1500
+
+    const r = await seedProject(db, 'gamma');
+    await runProject(r.id, 'nightly', WINDOW, budgeted(vi.fn(async (_b: unknown, _d: unknown, x: { budget: (n: number) => Promise<boolean> }) => {
+      await reserve(x);
+      return { aiOk: false, summary: null, notable: [], aiSubstance: null, model: null, tokens: 0, refundable: 99_999 }; // never more than reserved
+    })));
+    expect(await llm()).toBe('1800');
+  });
+
+  it('live: the tx is stored in live_runs from onBroadcast (before the receipt wait), which is 30 s', async () => {
+    const p = await seedProject(db, 'alpha');
+    const tx = `0x${'ef'.repeat(32)}` as Hex;
+    let txDuringWait: string | null | undefined;
+    let timeout: number | undefined;
+    const attest = vi.fn(async (_n: unknown, d: AttestDeps) => {
+      await d.onBroadcast?.(tx, 3);
+      timeout = d.receiptTimeoutMs;
+      txDuringWait = (await db.select().from(liveRuns))[0].tx;
+      return { skipped: 'error' as const, error: 'timeout', txHash: tx, nonce: 3 };
     });
-    await runProject(p.id, 'nightly', WINDOW, deps);
-    const r = await db.execute(`select llm_tokens::text as t from budget where day='${day}'` as never);
-    expect((r.rows[0] as { t: string }).t).toBe('300');
+    const { deps } = makeDeps(db, { attest: attest as never });
+    await runProject(p.id, 'live', await liveWindow(db, p.id, NOW), deps);
+    expect(txDuringWait).toBe(tx);
+    expect(timeout).toBe(30_000);
+    expect((await db.select().from(liveRuns))[0]).toMatchObject({ status: 'done', tx, attestationUid: null });
   });
 
   it('facts of an unexpected shape fail that source only (the step detail is computed inside the guard)', async () => {

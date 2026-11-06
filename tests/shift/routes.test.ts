@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { GET as dispatchGET } from '@/app/api/shift/dispatch/route';
 import { POST as runPOST } from '@/app/api/shift/run/route';
 import { GET as liveGET } from '@/app/api/shift/live/route';
+import { GET as staleGET } from '@/app/api/shift/finalize-stale/route';
 import * as liveRoute from '@/app/api/shift/live/route';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -76,8 +77,22 @@ describe('shift routes: auth and input', () => {
     expect(await db.select().from(liveRuns)).toHaveLength(0);
   });
 
-  it('vercel.json schedules the dispatch cron at 05:00 UTC', () => {
+  it('finalize-stale: 503 when CRON_SECRET is unset, 401 on a wrong bearer', async () => {
+    delete process.env.CRON_SECRET;
+    expect((await staleGET(new Request('http://localhost/api/shift/finalize-stale'))).status).toBe(503);
+    process.env.CRON_SECRET = 'cron-secret-value';
+    const r = await staleGET(new Request('http://localhost/api/shift/finalize-stale', { headers: { authorization: 'Bearer nope' } }));
+    expect(r.status).toBe(401);
+    expect(await body(r)).toEqual({ error: 'unauthorized' });
+  });
+
+  it('vercel.json: dispatch at 05:00 UTC, stale recovery at 06:00 UTC', () => {
     const v = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf8'));
-    expect(v).toEqual({ crons: [{ path: '/api/shift/dispatch', schedule: '0 5 * * *' }] });
+    expect(v).toEqual({
+      crons: [
+        { path: '/api/shift/dispatch', schedule: '0 5 * * *' },
+        { path: '/api/shift/finalize-stale', schedule: '0 6 * * *' },
+      ],
+    });
   });
 });

@@ -60,7 +60,7 @@ export function makeDeps(db: Db, over: Partial<ShiftDeps> = {}) {
     budget: async () => true,
     attest: attest as unknown as ShiftDeps['attest'],
     attestMany: attestMany as unknown as ShiftDeps['attestMany'],
-    explain: vi.fn(async () => ({ aiOk: true, summary: 'Code changes landed.', notable: [], aiSubstance: null, model: 'm', tokens: 10 })),
+    explain: vi.fn(async () => ({ aiOk: true, summary: 'Code changes landed.', notable: [], aiSubstance: null, model: 'm', tokens: 10, refundable: 0 })),
     adapters: stubAdapters(),
     agentId: 42n,
     ...over,

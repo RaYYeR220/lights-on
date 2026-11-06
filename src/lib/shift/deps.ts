@@ -8,7 +8,7 @@ import { checkRepoDetailed, type FetchLike } from '@/lib/adapters/repo';
 import { checkChain } from '@/lib/adapters/chain';
 import { checkVibestarter } from '@/lib/adapters/vibestarter';
 import { DEFAULT_BASE_RPC, getBaseClient, type RpcLike } from '@/lib/adapters/baseRpc';
-import { attestMany, attestOne, attestationReceipt, type AttestDeps, type AttestReceipt } from '@/lib/attest/eas';
+import { attestMany, attestOne, attestationStatus, type AttestDeps, type AttestReceipt } from '@/lib/attest/eas';
 import { getPublicClient, getWallet, type AnyPublicClient } from '@/lib/attest/signer';
 import { safeFetch } from '@/lib/net/safeFetch';
 import { explainNight } from './explain';
@@ -41,8 +41,8 @@ export interface ShiftDeps {
   adapters?: Partial<Adapters>;
   /** Watcher wallet + read client; wallet null -> attestation `disabled`. */
   signer?: { wallet: AttestDeps['wallet']; publicClient: AnyPublicClient };
-  /** Settles a broadcast tx (defaults to attestationReceipt on signer.publicClient). */
-  attestReceipt?: (txHash: Hex) => Promise<AttestReceipt>;
+  /** Settles a broadcast tx from its receipt and nonce (defaults to attestationStatus on signer.publicClient). */
+  attestReceipt?: (txHash: Hex, nonce: number | null) => Promise<AttestReceipt>;
   /** Base RPC for chain/vibestarter adapters (defaults to getBaseClient() inside them). */
   rpc?: RpcLike;
   githubToken?: string;
@@ -65,7 +65,9 @@ export function canAttest(deps: Pick<ShiftDeps, 'agentId'>): boolean {
   return typeof deps.agentId === 'bigint' && deps.agentId > 0n;
 }
 
-export function attestDepsFor(deps: ShiftDeps, onBroadcast?: (txHash: Hex) => Promise<void>): AttestDeps {
+export function attestDepsFor(
+  deps: ShiftDeps, onBroadcast?: AttestDeps['onBroadcast'], opts: { receiptTimeoutMs?: number } = {},
+): AttestDeps {
   return {
     wallet: canAttest(deps) ? deps.signer?.wallet ?? null : null,
     // Never read when wallet is null: attest returns { skipped: 'disabled' } first.
@@ -73,13 +75,15 @@ export function attestDepsFor(deps: ShiftDeps, onBroadcast?: (txHash: Hex) => Pr
     budget: (wei) => deps.budget('gas_wei', wei),
     release: async (wei) => { await deps.release?.('gas_wei', wei); },
     ...(onBroadcast ? { onBroadcast } : {}),
+    ...(opts.receiptTimeoutMs ? { receiptTimeoutMs: opts.receiptTimeoutMs } : {}),
   };
 }
 
-export function receiptOf(deps: ShiftDeps): ((txHash: Hex) => Promise<AttestReceipt>) | null {
+export function receiptOf(deps: ShiftDeps): ((txHash: Hex, nonce: number | null) => Promise<AttestReceipt>) | null {
   if (deps.attestReceipt) return deps.attestReceipt;
   const pc = deps.signer?.publicClient;
-  return pc ? (tx) => attestationReceipt(tx, pc) : null;
+  const sender = deps.signer?.wallet?.account.address ?? null;
+  return pc ? (tx, nonce) => attestationStatus(tx, nonce, sender, pc) : null;
 }
 
 export const DEFAULT_SITE_URL = 'https://lights-on.vercel.app';

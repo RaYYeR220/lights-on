@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, keccak256, toBytes, zeroAddress, type Hex } from 'viem';
 import {
-  attestMany, attestOne, attestationReceipt, computeFees, decodeNight, encodeNight, schemaUid, SCHEMA, type AttestDeps, type NightAttestation,
+  attestMany, attestOne, attestationStatus, computeFees, decodeNight, encodeNight, schemaUid, SCHEMA, type AttestDeps, type NightAttestation,
 } from '@/lib/attest/eas';
 import { EAS_ADDRESS, easAbi } from '@/lib/attest/abi';
 
@@ -22,6 +22,7 @@ function deps(over: { budget?: (w: bigint) => Promise<boolean>; wallet?: null; e
     }),
     getBlock: vi.fn(async () => ({ baseFeePerGas: over.baseFee ?? 1_000_000n })),
     estimateMaxPriorityFeePerGas: vi.fn(async () => over.tip ?? 1_000_000n),
+    getTransactionCount: vi.fn(async () => 7),
     waitForTransactionReceipt: vi.fn(),
   };
   const wallet = over.wallet === null ? null : ({ account: { address: zeroAddress }, chain: undefined, writeContract } as never);
@@ -84,8 +85,9 @@ describe('explicit fees', () => {
   it('passes gas x1.2 and both fee fields to writeContract; tip clamped', async () => {
     const { d, writeContract } = deps({ baseFee: 5_000_000n, tip: 1_000_000_000n });
     await attestOne(night(), d); // receipt wait is unmocked -> error after broadcast, fine
-    const arg = writeContract.mock.calls[0]![0] as { gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
+    const arg = writeContract.mock.calls[0]![0] as { gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; nonce: number };
     expect(arg.gas).toBe(240_000n);
+    expect(arg.nonce).toBe(7); // explicit, from the pending count
     expect(arg.maxPriorityFeePerGas).toBe(10_000_000n);
     expect(arg.maxFeePerGas).toBe(20_000_000n);
   });
@@ -125,24 +127,27 @@ describe('after broadcast the tx hash is never lost', () => {
   it('receipt wait fails -> skipped error WITH txHash; onBroadcast saw it first; no refund', async () => {
     const { d, publicClient, release } = deps();
     publicClient.waitForTransactionReceipt.mockRejectedValue(Object.assign(new Error('x'), { name: 'WaitForTransactionReceiptTimeoutError' }));
-    const seen: Hex[] = [];
-    const r = await attestMany([night(1), night(2)], { ...d, onBroadcast: async (h) => { seen.push(h); } });
-    expect(r).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT });
-    expect(seen).toEqual([SENT]);
+    const seen: [Hex, number][] = [];
+    const r = await attestMany([night(1), night(2)], { ...d, onBroadcast: async (h, n) => { seen.push([h, n]); } });
+    expect(r).toEqual({ skipped: 'error', error: 'timeout', txHash: SENT, nonce: 7 });
+    expect(seen).toEqual([[SENT, 7]]);
     expect(release).not.toHaveBeenCalled();
+    expect(publicClient.getTransactionCount).toHaveBeenCalledWith({ address: zeroAddress, blockTag: 'pending' });
     expect(publicClient.waitForTransactionReceipt).toHaveBeenCalledWith({ hash: SENT, timeout: 60_000 });
+    await attestOne(night(), { ...d, receiptTimeoutMs: 30_000 });
+    expect(publicClient.waitForTransactionReceipt).toHaveBeenLastCalledWith({ hash: SENT, timeout: 30_000 });
   });
 
   it('reverted receipt -> skipped error reverted WITH txHash', async () => {
     const { d, publicClient } = deps();
     publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', logs: [] });
-    expect(await attestOne(night(), d)).toEqual({ skipped: 'error', error: 'reverted', txHash: SENT });
+    expect(await attestOne(night(), d)).toEqual({ skipped: 'error', error: 'reverted', txHash: SENT, nonce: 7 });
   });
 
   it('mined but logs do not match the batch -> skipped error WITH txHash (settled later, never re-sent)', async () => {
     const { d, publicClient } = deps();
     publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', logs: [attestedLog(uid(1))] });
-    expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'uid_count_mismatch', txHash: SENT });
+    expect(await attestMany([night(1), night(2)], d)).toEqual({ skipped: 'error', error: 'uid_count_mismatch', txHash: SENT, nonce: 7 });
   });
 
   it('a throwing onBroadcast never breaks the send', async () => {
@@ -153,20 +158,45 @@ describe('after broadcast the tx hash is never lost', () => {
   });
 });
 
-describe('attestationReceipt', () => {
-  const client = (impl: () => Promise<unknown>) => ({ getTransactionReceipt: vi.fn(impl) }) as never;
+describe('attestationStatus', () => {
+  const SENDER = '0x00000000000000000000000000000000000000aa' as const;
+  const nf = () => Object.assign(new Error('Transaction receipt with hash could not be found'), { name: 'TransactionReceiptNotFoundError' });
+  const client = (receipt: () => Promise<unknown>, mined = 0) => ({
+    getTransactionReceipt: vi.fn(receipt),
+    getTransactionCount: vi.fn(async () => mined),
+  });
 
   it('mined: uids of the EAS Attested logs in log order, other contracts ignored', async () => {
     const logs = [attestedLog(uid(1)), attestedLog(uid(9), '0x0000000000000000000000000000000000000bad'), attestedLog(uid(2))];
-    expect(await attestationReceipt(SENT, client(async () => ({ status: 'success', logs }))))
+    expect(await attestationStatus(SENT, 4, SENDER, client(async () => ({ status: 'success', logs })) as never))
       .toEqual({ status: 'success', uids: [uid(1), uid(2)] });
   });
 
-  it('reverted / not found / other errors', async () => {
-    expect(await attestationReceipt(SENT, client(async () => ({ status: 'reverted', logs: [] })))).toEqual({ status: 'reverted' });
-    const nf = Object.assign(new Error('Transaction receipt with hash could not be found'), { name: 'TransactionReceiptNotFoundError' });
-    expect(await attestationReceipt(SENT, client(async () => { throw nf; }))).toEqual({ status: 'not_found' });
-    const other = await attestationReceipt(SENT, client(async () => { throw new Error('boom https://rpc/?key=SECRET'); }));
-    expect(other).toEqual({ status: 'error', error: 'error' });
+  it('reverted', async () => {
+    expect(await attestationStatus(SENT, 4, SENDER, client(async () => ({ status: 'reverted', logs: [] })) as never)).toEqual({ status: 'reverted' });
+  });
+
+  it('not found and latest nonce <= tx nonce -> pending (may still mine: stays claimed)', async () => {
+    for (const mined of [3, 4]) {
+      const c = client(async () => { throw nf(); }, mined);
+      expect(await attestationStatus(SENT, 4, SENDER, c as never)).toEqual({ status: 'pending' });
+    }
+  });
+
+  it('not found and latest nonce > tx nonce -> dropped (another tx used the nonce); count read before the receipt', async () => {
+    const c = client(async () => { throw nf(); }, 5);
+    expect(await attestationStatus(SENT, 4, SENDER, c as never)).toEqual({ status: 'dropped' });
+    expect(c.getTransactionCount).toHaveBeenCalledWith({ address: SENDER, blockTag: 'latest' });
+    expect(c.getTransactionCount.mock.invocationCallOrder[0]).toBeLessThan(c.getTransactionReceipt.mock.invocationCallOrder[0]);
+  });
+
+  it('unknown nonce or sender -> never dropped', async () => {
+    expect(await attestationStatus(SENT, null, SENDER, client(async () => { throw nf(); }, 99) as never)).toEqual({ status: 'pending' });
+    expect(await attestationStatus(SENT, 4, null, client(async () => { throw nf(); }, 99) as never)).toEqual({ status: 'pending' });
+  });
+
+  it('RPC errors decide nothing and leak nothing', async () => {
+    const r = await attestationStatus(SENT, 4, SENDER, client(async () => { throw new Error('boom https://rpc/?key=SECRET'); }) as never);
+    expect(r).toEqual({ status: 'error', error: 'error' });
   });
 });

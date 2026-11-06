@@ -53,6 +53,8 @@ export const shifts = pgTable('shifts', {
   llmTokens: numeric('llm_tokens', { mode: 'string' }).notNull().default('0'),
   githubCalls: integer('github_calls').notNull().default(0),
   notes: text('notes'),
+  /** Stale-pass lease: one finalize pass at a time per shift. */
+  leaseUntil: tsz('lease_until'),
 }, (t) => [
   check('shifts_kind_chk', inList('kind', SHIFT_KINDS)),
   uniqueIndex('shifts_nightly_night_uq').on(t.kind, t.night).where(sql`${t.kind} = 'nightly'`),
@@ -71,7 +73,11 @@ export const nights = pgTable('nights', {
   evidenceHash: text('evidence_hash'),
   attestationUid: text('attestation_uid'),
   attestTx: text('attest_tx'),
+  /** Nonce of attest_tx (set before signing): a not-found tx is dropped only once a later tx consumed this nonce. */
+  attestNonce: integer('attest_nonce'),
   attestClaimedAt: tsz('attest_claimed_at'),
+  /** Claim token (random uuid per claim statement): every write to a claimed row must present it. */
+  attestClaimId: text('attest_claim_id'),
   aiModel: text('ai_model'),
   aiOk: boolean('ai_ok').notNull().default(false),
   createdAt: tsz('created_at').notNull().defaultNow(),

@@ -15,6 +15,13 @@
       "when": 1793927918489,
       "tag": "0001_shift_pipeline",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793932455857,
+      "tag": "0002_claim_tokens",
+      "breakpoints": true
     }
   ]
 }
