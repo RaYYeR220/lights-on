@@ -5,6 +5,7 @@ import { getShift } from '@/lib/db/queries';
 import { safeErrorCode } from '@/lib/net/redact';
 import { nightOf, shiftStartOfNight } from '@/lib/shift/night';
 import type { ShiftDeps } from '@/lib/shift/deps';
+import { resolveBackerProjectIds } from '@/lib/backer';
 import { buildBriefing, gatherBriefingProjects, type BriefingProject } from './briefing';
 import { sendMessage } from './telegram';
 import { parsePushTarget, pushPayload, sendPush, vapidFromEnv, type PushPayload, type PushSub, type PushResult } from './webpush';
@@ -22,7 +23,7 @@ export interface NotifyDeps {
   /** Null/absent = channel not configured: its subscriptions are skipped without error. */
   sendTelegram?: ((chatId: string, text: string) => Promise<{ ok: true } | { ok: false; blocked: boolean; code: string }>) | null;
   sendWebPush?: ((sub: PushSub, payload: PushPayload) => Promise<PushResult>) | null;
-  /** Task 13 plugs the real backer lookup in here. */
+  /** Wallet addresses -> watched project ids (withNotify plugs in resolveBackerProjectIds). */
   resolveAddresses?: (addrs: string[]) => Promise<number[]>;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -147,7 +148,10 @@ export function withNotify(deps: ShiftDeps): ShiftDeps {
   return {
     ...deps,
     onFinalized: async (shiftId) => {
-      await onShiftFinalized(shiftId, { db: deps.db, now: deps.now, ...senderDeps() });
+      await onShiftFinalized(shiftId, {
+        db: deps.db, now: deps.now, ...senderDeps(),
+        resolveAddresses: (addrs) => resolveBackerProjectIds(addrs, { db: deps.db }),
+      });
     },
   };
 }
