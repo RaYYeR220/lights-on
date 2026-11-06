@@ -26,9 +26,9 @@ const CLASSIFY_MAX_TOKENS = 700;
 const EXPLAIN_MAX_TOKENS = 300;
 
 const ClassifySchema = z.object({
-  items: z.array(z.object({ ref: z.string(), kind: z.enum(['feature', 'fix', 'refactor', 'docs', 'deps', 'chore', 'unclear']) })),
+  items: z.array(z.object({ ref: z.string(), kind: z.enum(['feature', 'fix', 'refactor', 'docs', 'deps', 'chore', 'unclear']) })).max(60),
   ai_substance: z.enum(['substantive', 'mostly_cosmetic', 'unclear']),
-  notable: z.array(z.string().max(120)).max(5),
+  notable: z.array(z.string()),
 });
 
 /** Plain text only: markdown, HTML and URLs stripped, <= 280 chars, null if empty or a banned word appears. */
@@ -56,43 +56,54 @@ const TEMPLATES: Record<Status, string> = {
   unavailable: 'None of the checked sources could be read in this window, so no claim is made either way.',
 };
 
-function scrub(s: string): string {
-  return s.split(UNTRUSTED_CLOSE).join('').split(UNTRUSTED_OPEN).join('');
+/** Neutralize angle brackets so untrusted text can never open or close the fence (case/whitespace/nesting proof). */
+function neutralize(s: string): string {
+  return s.replace(/</g, '‹').replace(/>/g, '›');
 }
-const clip = (s: string, n: number) => scrub(s).replace(/\s+/g, ' ').trim().slice(0, n);
+const clip = (s: string, n: number) => neutralize(s).replace(/\s+/g, ' ').trim().slice(0, n);
 
-function buildInput(b: EvidenceBundle, d: Decision): { text: string; empty: boolean } {
+function buildInput(b: EvidenceBundle, d: Decision): { text: string; empty: boolean; refs: Set<string> } {
   const repo = b.sources.repo?.facts ?? null;
   const live = b.sources.liveapp?.facts ?? null;
   const chain = b.sources.chain?.facts ?? null;
   const lines: string[] = [];
   let count = 0;
+  const refs = new Set<string>();
+  let ci = 0;
+  let ri = 0;
 
   for (const c of repo?.commits ?? []) {
     count++;
+    const ref = `c${++ci}`;
+    refs.add(ref);
     const files = c.files && c.files.length ? ` files=[${c.files.slice(0, 30).map((f) => clip(f, 200)).join(', ')}]` : '';
-    lines.push(`commit:${clip(c.sha, 12)} kind=${c.kind} "${clip(c.message.split('\n')[0] ?? '', 200)}"${files}`);
+    lines.push(`${ref} commit:${clip(c.sha, 12)} kind=${c.kind} "${clip(c.message.split('\n')[0] ?? '', 200)}"${files}`);
   }
   for (const r of repo?.releases ?? []) {
     count++;
-    lines.push(`release:${clip(r.tag, 80)} name="${clip(r.name ?? '', 120)}"`);
+    const ref = `r${++ri}`;
+    refs.add(ref);
+    lines.push(`${ref} release:${clip(r.tag, 80)} name="${clip(r.name ?? '', 120)}"`);
   }
   if (live?.newDeploy) {
     count++;
-    lines.push('deploy: the live app has a new deployment');
+    refs.add('d1');
+    lines.push('d1 deploy: the live app has a new deployment');
   }
   const added = (live?.textDelta?.added ?? []).slice(0, 10);
   const removed = (live?.textDelta?.removed ?? []).slice(0, 10);
   if (added.length || removed.length) {
     count++;
-    lines.push('site_text:');
+    refs.add('d2');
+    lines.push('d2 site_text:');
     for (const a of added) lines.push(`  added: ${clip(a, 200)}`);
     for (const r of removed) lines.push(`  removed: ${clip(r, 200)}`);
   }
   const nd = chain?.newDeployments.length ?? 0;
   if (nd > 0) {
     count++;
-    lines.push(`chain: ${nd} new contract deployment(s)`);
+    refs.add('x1');
+    lines.push(`x1 chain: ${nd} new contract deployment(s)`);
   }
 
   const text = [
@@ -102,7 +113,7 @@ function buildInput(b: EvidenceBundle, d: Decision): { text: string; empty: bool
     lines.join('\n') || '(nothing recorded)',
     UNTRUSTED_CLOSE,
   ].join('\n');
-  return { text, empty: count === 0 };
+  return { text, empty: count === 0, refs: refs };
 }
 
 const est = (chars: number) => Math.ceil(chars / 4);
@@ -128,9 +139,21 @@ export async function explainNight(b: EvidenceBundle, d: Decision, deps: Explain
   });
   if (!cls.ok) return fail(tokens, null);
   tokens += cls.tokens;
-  const notable = cls.data.notable.map((n) => sanitizeSummary(n)).filter((n): n is string => n !== null);
+  const notable = cls.data.notable
+    .map((n) => sanitizeSummary(n))
+    .filter((n): n is string => n !== null)
+    .slice(0, 5)
+    .map((n) => n.slice(0, 120).trim());
 
-  const kinds = cls.data.items.map((i) => `${clip(i.ref, 100)}=${i.kind}`).join('; ') || 'none';
+  // Only classifier output we can validate (our own refs, enum kinds) reaches the explain prompt, and only as counts.
+  const seen = new Set<string>();
+  const counts: Record<string, number> = {};
+  for (const i of cls.data.items) {
+    if (!input.refs.has(i.ref) || seen.has(i.ref)) continue;
+    seen.add(i.ref);
+    counts[i.kind] = (counts[i.kind] ?? 0) + 1;
+  }
+  const kinds = Object.entries(counts).map(([k, n]) => `${k}=${n}`).join(', ') || 'none';
   const explainUser = `${input.text}\n\nClassification: ${kinds}; substance=${cls.data.ai_substance}`;
   if (!(await deps.budget(EXPLAIN_MAX_TOKENS + est(EXPLAIN_SYSTEM.length + explainUser.length)))) return fail(tokens, null);
   const exp = await veniceText({

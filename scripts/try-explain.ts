@@ -26,4 +26,7 @@ async function main() {
   const r = await explainNight(b, d, { budget: async () => true });
   console.log(JSON.stringify({ decision: d, result: r }, null, 2));
 }
-main();
+main().catch((e) => {
+  console.error('try-explain failed:', e instanceof Error ? e.name : 'error');
+  process.exit(1);
+});
