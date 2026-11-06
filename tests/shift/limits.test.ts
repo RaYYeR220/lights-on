@@ -58,7 +58,8 @@ describe('checkLiveLimit', () => {
     expect((await checkLiveLimit('ip2', p.id, deps)).ok).toBe(true);
   });
 
-  it('60 per day across everyone; refusals do not consume the daily count', async () => {
+  it('100 per day across everyone; refusals do not consume the daily count', async () => {
+    expect(CAPS.liveRunsPerDay).toBe(100);
     const p = await seedProject(db, 'a');
     const clock = { now: new Date(NOW) };
     const deps = limitDeps(clock);
@@ -70,7 +71,26 @@ describe('checkLiveLimit', () => {
     expect(r).toMatchObject({ ok: false, reason: 'daily_cap' });
     if (!r.ok) expect(r.retryAfterSec).toBe(Math.ceil((Date.parse('2026-11-07T00:00:00Z') - NOW.getTime()) / 1000));
     const row = await db.execute(`select live_runs::text as n from budget where day='2026-11-06'` as never);
-    expect((row.rows[0] as { n: string }).n).toBe('60');
+    expect((row.rows[0] as { n: string }).n).toBe('100');
+  });
+
+  it('10 per requester per UTC day, even when spread out past the 10-min window', async () => {
+    const ps = await Promise.all(Array.from({ length: 12 }, (_, i) => seedProject(db, `p${i}`)));
+    const clock = { now: new Date(NOW) };
+    const deps = limitDeps(clock);
+    for (let i = 0; i < 10; i++) {
+      expect((await checkLiveLimit('ip1', ps[i].id, deps)).ok).toBe(true);
+      clock.now = new Date(clock.now.getTime() + 11 * 60_000); // never trips the 3 per 10 min window
+    }
+    const r = await checkLiveLimit('ip1', ps[10].id, deps);
+    expect(r).toMatchObject({ ok: false, reason: 'ip_daily_cap' });
+    if (!r.ok) expect(r.retryAfterSec).toBe(Math.ceil((Date.parse('2026-11-07T00:00:00Z') - clock.now.getTime()) / 1000));
+    expect(await db.select().from(liveRuns)).toHaveLength(10);
+    expect((await checkLiveLimit('ip2', ps[10].id, deps)).ok).toBe(true); // someone else is not affected
+    // the next UTC day brings a new requester hash (daily salt) and a fresh count
+    clock.now = new Date('2026-11-07T00:00:01Z');
+    expect((await checkLiveLimit('ip1-next-day', ps[11].id, deps)).ok).toBe(true);
+    expect(LIVE_LIMITS.perIpPerDay).toBe(10);
   });
 
   it('a racing request that lost the reservation is refused and leaves no row', async () => {

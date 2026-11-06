@@ -1,7 +1,8 @@
 import { after } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getProjectBySlug, updateLiveRun } from '@/lib/db/queries';
-import { json } from '@/lib/net/http';
+import { json, sameOrigin } from '@/lib/net/http';
+import { siteUrl } from '@/lib/site';
 import { safeErrorCode } from '@/lib/net/redact';
 import { makeShiftDeps } from '@/lib/shift/deps';
 import { withNotify } from '@/lib/notify/send';
@@ -41,6 +42,8 @@ function donePayload(r: RunResult | null) {
 export async function GET(req: Request): Promise<Response> {
   const slug = new URL(req.url).searchParams.get('project') ?? '';
   if (!SLUG.test(slug)) return json({ error: 'bad_project' }, 400);
+  // A side-effecting GET: only our own pages (or a non-browser client) may start one.
+  if (!sameOrigin(req.headers, siteUrl())) return json({ error: 'forbidden_origin' }, 403);
   const secret = process.env.INTERNAL_RUN_TOKEN;
   if (!secret) return json({ error: 'misconfigured' }, 503); // the requester-hash salt; never fall back to a constant
 

@@ -62,6 +62,10 @@ export function LiveShift({ slug }: { slug: string }) {
       setPhase({ k: "error", message: `Live shifts are rate limited${body.reason ? ` (${body.reason.replace(/_/g, " ")})` : ""}. Try again in ${waitText(sec)}.` });
       return;
     }
+    if (res.status === 403) {
+      setPhase({ k: "error", message: "Live shifts can only be started from this site." });
+      return;
+    }
     if (res.status === 503) {
       setPhase({ k: "error", message: "Live shifts are not available on this deployment right now. The nightly shift still runs at 05:00 UTC." });
       return;

@@ -16,6 +16,26 @@ export function secretEquals(given: string | null | undefined, expected: string)
   return timingSafeEqual(a, b);
 }
 
+/**
+ * Same-origin guard for side-effecting GETs started from our own pages. A request with an `Origin` header must come
+ * from `site`'s origin; without one, a browser's `Sec-Fetch-Site` must say same-origin (or `none`: typed into the
+ * address bar), which also stops no-cors embeds (<img>, <script>) that carry no Origin. Requests with neither header
+ * (curl, server to server) pass: they are limited per IP like everyone else.
+ */
+export function sameOrigin(h: Headers, site: string): boolean {
+  const origin = h.get('origin');
+  if (origin !== null) {
+    try {
+      return new URL(origin).origin === new URL(site).origin;
+    } catch {
+      return false; // "null" (sandboxed frames, file://) or garbage
+    }
+  }
+  const sfs = h.get('sec-fetch-site');
+  if (sfs !== null) return sfs === 'same-origin' || sfs === 'none';
+  return true;
+}
+
 /** `Authorization: Bearer <secret>` check. */
 export function bearerEquals(header: string | null, expected: string): boolean {
   const m = /^Bearer (.+)$/.exec(header ?? '');

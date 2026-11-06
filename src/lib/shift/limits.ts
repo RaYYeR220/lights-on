@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import ipaddr from 'ipaddr.js';
-import { deleteLiveRun, insertLiveRun, recentLiveRuns } from '@/lib/db/queries';
+import { countLiveRuns, deleteLiveRun, insertLiveRun, recentLiveRuns } from '@/lib/db/queries';
 import type { Db } from '@/lib/db';
 import type { ShiftDeps } from './deps';
 
@@ -13,7 +13,8 @@ export const CAPS = {
   gasWeiPerDay: 1_000_000_000_000_000n, // 0.001 ETH
   /** Live runs stop this far short of the daily gas cap (they get 0.0005 ETH). */
   nightlyReserveWei: 500_000_000_000_000n, // 0.0005 ETH
-  liveRunsPerDay: 60,
+  /** Live runs (public button + community first runs) per UTC day, everyone together. Gas is ~1e-6 ETH per run. */
+  liveRunsPerDay: 100,
   githubCallsPerNight: 400,
   /** Live runs: hard per-run cap, plus the daily `github_calls` counter (live calls only) at 30/hour x 24. */
   githubCallsPerLiveRun: 3,
@@ -23,12 +24,14 @@ export const CAPS = {
 export const LIVE_LIMITS = {
   perIp: 3,
   perIpWindowMs: 10 * 60_000,
+  /** Per requester per UTC day: one client can no longer spend the global daily cap alone. */
+  perIpPerDay: 10,
   perProject: 1,
   perProjectWindowMs: 5 * 60_000,
   perDay: CAPS.liveRunsPerDay,
 } as const;
 
-export type LiveLimitReason = 'project_cooldown' | 'ip_limit' | 'daily_cap';
+export type LiveLimitReason = 'project_cooldown' | 'ip_limit' | 'ip_daily_cap' | 'daily_cap';
 export type LiveLimit =
   | { ok: true; liveRunId: number }
   | { ok: false; retryAfterSec: number; reason: LiveLimitReason };
@@ -50,6 +53,11 @@ async function windowCheck(
     const freesUp = ip[LIVE_LIMITS.perIp - 1].startedAt.getTime(); // the oldest of the last `perIp` runs
     return { ok: false, reason: 'ip_limit', retryAfterSec: secs(freesUp + LIVE_LIMITS.perIpWindowMs - t) };
   }
+  // the requester hash is salted per UTC day, so "since midnight" is exactly this requester's day
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if ((await countLiveRuns(db, ipHash, dayStart, beforeId)) >= LIVE_LIMITS.perIpPerDay) {
+    return { ok: false, reason: 'ip_daily_cap', retryAfterSec: untilUtcMidnight(now) };
+  }
   return null;
 }
 
@@ -59,7 +67,7 @@ function untilUtcMidnight(now: Date): number {
 }
 
 /**
- * Live-run admission: 1 per project per 5 min, 3 per requester per 10 min, 60 per UTC day.
+ * Live-run admission: 1 per project per 5 min, 3 per requester per 10 min and 10 per UTC day, 100 per UTC day overall.
  * Reserve-then-verify so concurrent requests cannot both slip through: cheap pre-check (no writes), atomic daily
  * counter, insert the `live_runs` row, then re-check counting only earlier rows. A loser deletes its row and refunds
  * the daily count. On success the reserved row id is returned; the run must reuse it.

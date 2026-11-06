@@ -481,6 +481,14 @@ export async function recentLiveRuns(
     .limit(10);
 }
 
+/** How many live runs one requester started since `since` (`beforeId`: only earlier rows). */
+export async function countLiveRuns(db: Db, ipHash: string, since: Date, beforeId?: number): Promise<number> {
+  const conds = [eq(liveRuns.requesterIpHash, ipHash), gte(liveRuns.startedAt, since)];
+  if (beforeId !== undefined) conds.push(lt(liveRuns.id, beforeId));
+  const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(liveRuns).where(and(...conds));
+  return Number(r?.n ?? 0);
+}
+
 export async function deleteLiveRun(db: Db, id: number): Promise<void> {
   await db.delete(liveRuns).where(eq(liveRuns.id, id));
 }

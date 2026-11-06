@@ -14,7 +14,7 @@ import { STALE_AFTER_MS } from '@/lib/shift/finalize';
 
 const saved = { ...process.env };
 afterEach(() => {
-  for (const k of ['CRON_SECRET', 'INTERNAL_RUN_TOKEN', 'DATABASE_URL']) {
+  for (const k of ['CRON_SECRET', 'INTERNAL_RUN_TOKEN', 'DATABASE_URL', 'NEXT_PUBLIC_SITE_URL']) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
@@ -55,6 +55,31 @@ describe('shift routes: auth and input', () => {
     expect(await r2.text()).not.toContain('script');
     expect(liveRoute.runtime).toBe('nodejs');
     expect(liveRoute.maxDuration).toBe(120);
+  });
+
+  it('live: same-origin only; a foreign Origin or a cross-site fetch is 403, curl (no headers) passes', async () => {
+    const db = await getDb('pglite://memory');
+    await migrate(db as never, { migrationsFolder: path.resolve(__dirname, '../../drizzle') });
+    process.env.DATABASE_URL = 'pglite://memory';
+    process.env.INTERNAL_RUN_TOKEN = 'internal-token-value';
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://lights-on-watch.vercel.app';
+    const get = (headers: Record<string, string>) => liveGET(new Request('http://localhost/api/shift/live?project=nope', { headers }));
+    for (const h of <Record<string, string>[]>[
+      { origin: 'https://evil.example' },
+      { origin: 'null' },
+      { origin: 'https://lights-on-watch.vercel.app.evil.example' },
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' },
+    ]) {
+      const r = await get(h);
+      expect(r.status).toBe(403);
+      expect(await body(r)).toEqual({ error: 'forbidden_origin' });
+    }
+    // allowed through to the next check (unknown project -> 404)
+    for (const h of <Record<string, string>[]>[{}, { origin: 'https://lights-on-watch.vercel.app' }, { 'sec-fetch-site': 'same-origin' }, { 'sec-fetch-site': 'none' }]) {
+      expect((await get(h)).status).toBe(404);
+    }
+    expect(await db.select().from(liveRuns)).toHaveLength(0);
   });
 
   it('live: 503 misconfigured when INTERNAL_RUN_TOKEN (the requester-hash salt) is unset', async () => {
