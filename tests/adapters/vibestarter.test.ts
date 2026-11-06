@@ -151,7 +151,7 @@ describe('checkVibestarter', () => {
       },
     });
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/net/);
+    expect(r.error).toBe('campaigns_unavailable: error');
   });
 });
 

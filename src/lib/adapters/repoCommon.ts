@@ -1,3 +1,4 @@
+import { safeErrorCode } from '@/lib/net/redact';
 import type { SafeFetchResult } from '@/lib/net/safeFetch';
 import type { CommitFact, TimeWindow } from '@/lib/types';
 import { classifyMessage, classifyPaths, isBot } from './pathHeuristic';
@@ -74,5 +75,5 @@ export function applyAggregate(commits: CommitFact[], files: string[], additions
 }
 
 export function errMsg(e: unknown): string {
-  return e instanceof Error ? (e.name === 'Error' ? e.message : `${e.name}: ${e.message}`) : String(e);
+  return safeErrorCode(e); // fixed code only; messages can embed URLs/keys
 }

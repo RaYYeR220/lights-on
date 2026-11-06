@@ -240,7 +240,8 @@ describe('github api path', () => {
         budget: budgetAlways,
       });
       expect(r.ok).toBe(false);
-      expect(r.error).toContain(err.message);
+      expect(r.error).toMatch(/^(blocked_url|error)$/);
+      expect(r.error).not.toContain(err.message);
       expect(r.source).toBe('repo');
     }
   });

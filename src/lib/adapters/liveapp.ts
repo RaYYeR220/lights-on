@@ -1,3 +1,4 @@
+import { safeErrorCode } from '@/lib/net/redact';
 import { createHash } from 'node:crypto';
 import { parse, HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { safeFetch, BlockedUrl, type SafeFetchResult } from '@/lib/net/safeFetch';
@@ -154,9 +155,9 @@ export async function checkLiveAppDetailed(
       if (res.status < 400) break;
       lastErr = `http ${res.status}`;
     } catch (e) {
-      if (e instanceof BlockedUrl) return { result: mkResult(null, false, `blocked: ${e.message}`, attempts), text: null };
+      if (e instanceof BlockedUrl) return { result: mkResult(null, false, 'blocked_url', attempts), text: null };
       last = null;
-      lastErr = (e as Error).message || 'fetch failed';
+      lastErr = safeErrorCode(e);
     }
     if (i === 0) await wait(deps.retryDelayMs ?? 1000);
   }

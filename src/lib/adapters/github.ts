@@ -110,7 +110,7 @@ export async function checkGithub(
 
   const atomGet = async (url: string) => {
     const r = await deps.fetch(url, { headers: { Accept: 'application/atom+xml' } });
-    if (r.status !== 200) throw new Error(`atom ${r.status}`);
+    if (r.status !== 200) throw new Error(`http_${r.status}`);
     return r.body;
   };
   const atomCommits = async (branch: string) => {

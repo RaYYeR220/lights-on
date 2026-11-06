@@ -92,7 +92,7 @@ describe('checkChain (contracts via RPC)', () => {
     const r = await checkChain([{ chainId: 8453, address: TOKEN }], null, window, { client: c });
     expect(r.ok).toBe(false);
     expect(r.facts).toBeNull();
-    expect(r.error).toMatch(/rpc down/);
+    expect(r.error).toBe('rpc_failed: error');
   });
 });
 

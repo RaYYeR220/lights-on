@@ -1,3 +1,4 @@
+import { safeErrorCode } from '@/lib/net/redact';
 import { decodeEventLog, type Hex } from 'viem';
 import type { AdapterResult, TimeWindow, TrancheFact, VibestarterFacts } from '@/lib/types';
 import { defaultFetch, type FetchFn } from '@/lib/adapters/chain';
@@ -31,17 +32,17 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 
 
 async function getJson(doFetch: FetchFn, url: string): Promise<unknown> {
   const res = await doFetch(url);
-  if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status} from ${new URL(url).pathname}`);
+  if (res.status < 200 || res.status >= 300) throw new Error(`http_${res.status}`);
   try {
     return JSON.parse(res.body);
   } catch {
-    throw new Error(`non-JSON from ${new URL(url).pathname}`);
+    throw new Error('invalid_json');
   }
 }
 
 async function loadCampaigns(doFetch: FetchFn): Promise<Rec[]> {
   const j = await getJson(doFetch, `${API}/api/campaigns?limit=50`);
-  if (!isRec(j) || !Array.isArray(j.campaigns)) throw new Error('campaigns: unexpected shape');
+  if (!isRec(j) || !Array.isArray(j.campaigns)) throw new Error('invalid_json');
   return j.campaigns.filter(isRec);
 }
 
@@ -169,7 +170,7 @@ export async function checkVibestarter(
     calls++;
     campaign = list.find((c) => c.id === campaignId);
   } catch (e) {
-    return fail(e instanceof Error ? e.message : String(e), calls + 1);
+    return fail(`campaigns_unavailable: ${safeErrorCode(e)}`, calls + 1);
   }
   if (!campaign) return fail(`campaign ${campaignId} not found`, calls);
 
@@ -209,7 +210,7 @@ export async function checkVibestarter(
     }
   } catch (e) {
     degraded = true;
-    notes.push(`rpc_unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    notes.push(`rpc_unavailable: ${safeErrorCode(e)}`);
   }
 
   let reportedActivity: VibestarterFacts['reportedActivity'] = [];

@@ -1,3 +1,4 @@
+import { safeErrorCode } from '@/lib/net/redact';
 import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
 import type { AdapterResult, ChainFacts, TimeWindow } from '@/lib/types';
 import { getBaseClient, getLogsChunked, windowBlocks, type RpcLike } from '@/lib/adapters/baseRpc';
@@ -40,15 +41,15 @@ export async function fetchBlockscoutPages(
     }
     const res = await doFetch(u);
     calls++;
-    if (res.status < 200 || res.status >= 300) throw new Error(`blockscout HTTP ${res.status}`);
+    if (res.status < 200 || res.status >= 300) throw new Error(`http_${res.status}`);
     let json: unknown;
     try {
       json = JSON.parse(res.body);
     } catch {
-      throw new Error('blockscout returned non-JSON');
+      throw new Error('invalid_json');
     }
     const j = json as { items?: unknown; next_page_params?: unknown };
-    if (!Array.isArray(j.items)) throw new Error('blockscout: unexpected shape');
+    if (!Array.isArray(j.items)) throw new Error('invalid_json');
     const items = j.items.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object');
     all.push(...items);
     next = j.next_page_params && typeof j.next_page_params === 'object' ? (j.next_page_params as Record<string, unknown>) : null;
@@ -61,7 +62,7 @@ export async function fetchBlockscoutPages(
 const ms = (iso: unknown): number => (typeof iso === 'string' ? Date.parse(iso) : NaN);
 const addrOf = (v: unknown): string | null =>
   v && typeof v === 'object' && typeof (v as { hash?: unknown }).hash === 'string' ? (v as { hash: string }).hash : null;
-const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const msg = safeErrorCode;
 
 /**
  * Nightly on-chain activity. Per Base contract: distinct tx hashes among logs emitted in the window
