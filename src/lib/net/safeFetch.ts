@@ -1,5 +1,7 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import ipaddr from 'ipaddr.js';
+import { Agent } from 'undici';
 
 export class BlockedUrl extends Error {
   constructor(message: string) {
@@ -39,83 +41,62 @@ export function userAgent(): string {
   return `LightsOnWatcher/1.0 (+${site}/methodology)`;
 }
 
-function v4ToInts(a: string): number[] | null {
-  const p = a.split('.');
-  if (p.length !== 4) return null;
-  const n = p.map(Number);
-  return n.every((x) => Number.isInteger(x) && x >= 0 && x <= 255) ? n : null;
-}
-
-function isBlockedV4(a: string): boolean {
-  const n = v4ToInts(a);
-  if (!n) return true; // unparsable: fail closed
-  const [a0, a1] = n;
-  return (
-    a0 === 0 ||
-    a0 === 10 ||
-    a0 === 127 ||
-    (a0 === 100 && a1 >= 64 && a1 <= 127) ||
-    (a0 === 169 && a1 === 254) ||
-    (a0 === 172 && a1 >= 16 && a1 <= 31) ||
-    (a0 === 192 && a1 === 168) ||
-    a0 >= 224 // multicast + reserved + broadcast
-  );
-}
-
-/** Expand an IPv6 literal to 8 16-bit groups, or null. */
-function parseV6(addr: string): number[] | null {
-  let a = addr.split('%')[0].toLowerCase();
-  const m = a.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
-  if (m) {
-    const v4 = v4ToInts(m[2]);
-    if (!v4) return null;
-    a = `${m[1]}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
-  }
-  const halves = a.split('::');
-  if (halves.length > 2) return null;
-  const head = halves[0] ? halves[0].split(':') : [];
-  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
-  let groups: string[];
-  if (halves.length === 2) {
-    const fill = 8 - head.length - tail.length;
-    if (fill < 1) return null;
-    groups = [...head, ...Array(fill).fill('0'), ...tail];
-  } else {
-    groups = head;
-  }
-  if (groups.length !== 8) return null;
-  const out = groups.map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
-  return out.some(Number.isNaN) ? null : out;
-}
-
-function v4FromGroups(g: number[]): string {
-  return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
-}
-
+/** Allowlist: only globally routable unicast passes. Unwraps IPv4-mapped; checks embedded v4 of 6to4/Teredo/NAT64. */
 export function isBlockedAddress(address: string): boolean {
-  const host = address.replace(/^\[|\]$/g, '');
-  const fam = isIP(host);
-  if (fam === 4) return isBlockedV4(host);
-  if (fam !== 6) return true;
-  const g = parseV6(host);
-  if (!g) return true;
-  if (g.every((x) => x === 0)) return true; // ::
-  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true; // ::1
-  // IPv4-mapped (::ffff:a.b.c.d) and deprecated IPv4-compatible (::a.b.c.d)
-  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0)) {
-    return isBlockedV4(v4FromGroups(g));
+  const host = address.replace(/^\[|\]$/g, '').split('%')[0];
+  if (!isIP(host)) return true;
+  let addr: ipaddr.IPv4 | ipaddr.IPv6;
+  try {
+    addr = ipaddr.process(host);
+  } catch {
+    return true;
   }
-  // NAT64 64:ff9b::/96 embeds a v4
-  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) {
-    return isBlockedV4(v4FromGroups(g));
+  const range = addr.range();
+  if (range === 'unicast') {
+    if (addr.kind() === 'ipv6') {
+      const b = (addr as ipaddr.IPv6).toByteArray();
+      // 64:ff9b:1::/48 local-use NAT64
+      if (b[0] === 0 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && b[4] === 0 && b[5] === 1) return true;
+    }
+    return false;
   }
-  if ((g[0] & 0xfe00) === 0xfc00) return true; // ULA fc00::/7
-  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
-  if ((g[0] & 0xff00) === 0xff00) return true; // multicast
-  return false;
+  if (addr.kind() === 'ipv6') {
+    const b = (addr as ipaddr.IPv6).toByteArray();
+    const v4 = (i: number, xor = 0) => b.slice(i, i + 4).map((x) => x ^ xor).join('.');
+    if (range === '6to4') return isBlockedAddress(v4(2));
+    if (range === 'teredo') return isBlockedAddress(v4(4)) || isBlockedAddress(v4(12, 0xff));
+    if (range === 'rfc6052') return isBlockedAddress(v4(12));
+  }
+  return true;
 }
 
 const defaultLookup: LookupFn = (h) => dnsLookup(h, { all: true });
+
+/**
+ * Connect-time lookup for the undici Agent: resolves all addresses, refuses if ANY is blocked,
+ * and hands back only vetted addresses, so the socket connects to exactly what was checked
+ * (Host/SNI stay the original hostname).
+ */
+export function guardedLookup(lookup: LookupFn = defaultLookup) {
+  return (
+    hostname: string,
+    opts: { all?: boolean } | undefined,
+    cb: (err: Error | null, address?: string | { address: string; family: number }[], family?: number) => void,
+  ) => {
+    lookup(hostname).then(
+      (answers) => {
+        if (!answers.length) return cb(new Error(`dns: no addresses for ${hostname}`));
+        for (const a of answers) {
+          if (isBlockedAddress(a.address)) return cb(new BlockedUrl(`host ${hostname} resolves to blocked address ${a.address}`));
+        }
+        const list = answers.map((a) => ({ address: a.address, family: a.family ?? (isIP(a.address) || 4) }));
+        if (opts?.all) cb(null, list);
+        else cb(null, list[0].address, list[0].family);
+      },
+      (e) => cb(e as Error),
+    );
+  };
+}
 
 async function assertSafe(u: URL, lookup: LookupFn): Promise<void> {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new BlockedUrl(`scheme not allowed: ${u.protocol}`);
@@ -162,7 +143,9 @@ async function readCapped(res: Response, maxBytes: number): Promise<{ body: stri
 
 export async function safeFetch(url: string, init: SafeFetchInit = {}): Promise<SafeFetchResult> {
   const lookup = init.lookup ?? defaultLookup;
-  const doFetch: FetchFn = init.fetch ?? ((u, i) => fetch(u, i));
+  const agent = new Agent({ connect: { lookup: guardedLookup(lookup) as never } });
+  const rawFetch: FetchFn = init.fetch ?? ((u, i) => fetch(u, i));
+  const doFetch: FetchFn = (u, i) => rawFetch(u, { ...i, dispatcher: agent } as RequestInit);
   const maxBytes = init.maxBytes ?? DEFAULT_MAX_BYTES;
   const timeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const started = Date.now();
@@ -206,5 +189,6 @@ export async function safeFetch(url: string, init: SafeFetchInit = {}): Promise<
     throw new Error(`too many redirects (>${MAX_HOPS})`);
   } finally {
     clearTimeout(timer);
+    void agent.close().catch(() => {});
   }
 }

@@ -12,9 +12,23 @@ export interface LiveAppDeps {
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
-const NEXT_ASSET = /\/_next\/static\/[^"'\s)<>\\]+/g;
-const VITE_ASSET = /\/assets\/[^"'\s)<>\\]+-[A-Za-z0-9_-]{6,}\.(?:js|css)/g;
 const BUILD_ID_RES = [/"buildId"\s*:\s*"([^"]+)"/, /\\"b\\"\s*:\s*\\"([^"\\]+)\\"/];
+const MAX_ATTR = 500;
+
+/** Normalised asset path if this src/href value is a deploy-bound asset, else null. Linear, bounded. */
+function assetPath(raw: string): string | null {
+  const v = raw.slice(0, MAX_ATTR);
+  let path = v;
+  const m = /^[a-z][a-z0-9+.-]{0,10}:\/\/[^/]{1,255}/i.exec(v);
+  if (m) path = v.slice(m[0].length);
+  path = path.split('?')[0].split('#')[0];
+  if (path.startsWith('/_next/static/')) return path;
+  if (path.startsWith('/assets/') && /\.(?:js|css)$/.test(path)) {
+    const base = path.slice(path.lastIndexOf('/') + 1).replace(/\.(?:js|css)$/, '');
+    if (/-[A-Za-z0-9_-]{6,}$/.test(base)) return path;
+  }
+  return null;
+}
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'HEAD']);
 
@@ -30,32 +44,30 @@ function collectText(node: Node, out: string[]): void {
   out.push(' ');
 }
 
-function visibleText(html: string): string {
-  const root = parse(html, { comment: false });
-  const parts: string[] = [];
-  collectText(root, parts);
-  return parts.join('').replace(/\d{6,}/g, '').replace(/\s+/g, ' ').trim();
-}
-
 export function extractFingerprint(
   html: string,
   _baseUrl: string,
 ): { deployFingerprint: string | null; textHash: string | null; title: string | null; text: string } {
   const assets = new Set<string>();
-  for (const re of [NEXT_ASSET, VITE_ASSET]) {
-    for (const m of html.matchAll(re)) assets.add(m[0].split('?')[0]);
+  const root = parse(html, { comment: false });
+  for (const el of root.querySelectorAll('script[src], link[href]')) {
+    const v = el.getAttribute('src') ?? el.getAttribute('href');
+    const p = v ? assetPath(v) : null;
+    if (p) assets.add(p);
   }
   for (const re of BUILD_ID_RES) {
     const m = html.match(re);
-    if (m) assets.add(`build:${m[1]}`);
+    if (m) assets.add(`build:${m[1].slice(0, 200)}`);
   }
   const deployFingerprint = assets.size ? sha256([...assets].sort().join('\n')) : null;
 
-  const text = visibleText(html);
+  const parts: string[] = [];
+  collectText(root, parts);
+  const text = parts.join('').replace(/\d{6,}/g, '').replace(/\s+/g, ' ').trim();
   const textHash = text ? sha256(text) : null;
 
   let title: string | null = null;
-  const t = parse(html, { comment: false }).querySelector('title');
+  const t = root.querySelector('title');
   if (t) title = t.text.replace(/\s+/g, ' ').trim().slice(0, 300) || null;
 
   return { deployFingerprint, textHash, title, text };
@@ -90,6 +102,12 @@ function isHtml(res: SafeFetchResult): boolean {
 
 const wait = (ms: number) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
 
+/**
+ * Caller should pass the last UP facts as `prev`: a recovery from an outage (prev down or
+ * hashless) is not a deploy, so newDeploy is only computed against an up, hashed prev.
+ * 2xx/3xx = up; 401/403/429 = ok:false degraded (blocked_by_site, not down); other 4xx/5xx or
+ * network error = failed attempt, two in a row = up:false.
+ */
 export async function checkLiveAppDetailed(
   url: string,
   prev: LiveAppFacts | null,
@@ -127,7 +145,13 @@ export async function checkLiveAppDetailed(
       const res = await doFetch(url);
       last = res;
       lastErr = undefined;
-      if (res.status < 500) break;
+      if (res.status === 401 || res.status === 403 || res.status === 429) {
+        return {
+          result: { ...mkResult(null, false, `blocked_by_site (${res.status})`, attempts), degraded: true },
+          text: null,
+        };
+      }
+      if (res.status < 400) break;
       lastErr = `http ${res.status}`;
     } catch (e) {
       if (e instanceof BlockedUrl) return { result: mkResult(null, false, `blocked: ${e.message}`, attempts), text: null };
@@ -137,7 +161,7 @@ export async function checkLiveAppDetailed(
     if (i === 0) await wait(deps.retryDelayMs ?? 1000);
   }
 
-  if (!last || last.status >= 500) {
+  if (!last || last.status >= 400) {
     const facts: LiveAppFacts = { ...base, httpStatus: last?.status ?? null, finalUrl: last?.finalUrl ?? null };
     return { result: mkResult(facts, true, lastErr, attempts), text: null };
   }
@@ -155,7 +179,8 @@ export async function checkLiveAppDetailed(
   }
 
   const newDeploy =
-    !!prev &&
+    prev?.up === true &&
+    (prev.deployFingerprint !== null || prev.textHash !== null) &&
     (prev.deployFingerprint !== deployFingerprint ||
       (prev.deployFingerprint === null && deployFingerprint === null && prev.textHash !== textHash));
 

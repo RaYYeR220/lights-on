@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { safeFetch, BlockedUrl, isBlockedAddress } from '@/lib/net/safeFetch';
+import { safeFetch, BlockedUrl, isBlockedAddress, guardedLookup } from '@/lib/net/safeFetch';
 
 const pub = async () => [{ address: '93.184.216.34', family: 4 }];
 const mk = (body: string | Uint8Array, init: ResponseInit = {}) => async () =>
@@ -66,9 +66,9 @@ describe('safeFetch blocking', () => {
   });
 
   it('isBlockedAddress covers the ranges', () => {
-    for (const a of ['127.0.0.1', '10.9.9.9', '172.31.0.1', '192.168.1.1', '169.254.1.1', '100.127.0.1', '0.1.2.3', '::1', '::', 'fe80::abcd', 'fc00::1', 'ff02::1', '::ffff:10.0.0.1', '::ffff:7f00:1', '224.5.5.5'])
+    for (const a of ['127.0.0.1', '10.9.9.9', '172.31.0.1', '192.168.1.1', '169.254.1.1', '100.127.0.1', '0.1.2.3', '::1', '::', 'fe80::abcd', 'fc00::1', 'ff02::1', '::ffff:10.0.0.1', '::ffff:7f00:1', '224.5.5.5', '198.18.0.1', '192.0.2.1', '192.0.0.5', '2002:7f00:1::', '2001:0:7f00:1::', '64:ff9b::7f00:1', '64:ff9b:1::1', 'garbage'])
       expect(isBlockedAddress(a), a).toBe(true);
-    for (const a of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '100.128.0.1', '2606:4700:4700::1111', '::ffff:8.8.8.8'])
+    for (const a of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '100.128.0.1', '2606:4700:4700::1111', '::ffff:8.8.8.8', '2002:0808:0808::1'])
       expect(isBlockedAddress(a), a).toBe(false);
   });
 });
@@ -125,5 +125,39 @@ describe('safeFetch body handling', () => {
         i!.signal!.addEventListener('abort', () => rej(i!.signal!.reason ?? new Error('aborted')));
       });
     await expect(safeFetch('http://public.test/', { lookup: pub, fetch: fetchImpl, timeoutMs: 50 })).rejects.toThrow();
+  });
+});
+
+describe('DNS pinning (rebinding)', () => {
+  const run = (lk: Parameters<typeof guardedLookup>[0], all = true) =>
+    new Promise<{ err: Error | null; res: unknown }>((resolve) =>
+      guardedLookup(lk)('rebind.test', { all }, (err, res) => resolve({ err, res })),
+    );
+
+  it('first lookup public, connect-time lookup 127.0.0.1 -> refused', async () => {
+    let n = 0;
+    const lookup = async () => [{ address: n++ === 0 ? '93.184.216.34' : '127.0.0.1', family: 4 }];
+    const fetchImpl = vi.fn(async (_u: string, i?: RequestInit) => {
+      // emulate what undici does at connect time through the Agent's lookup
+      expect((i as { dispatcher?: unknown }).dispatcher).toBeDefined();
+      return new Response('ok');
+    });
+    await safeFetch('http://rebind.test/', { lookup, fetch: fetchImpl }); // pre-check consumed the public answer
+    const { err } = await run(lookup);
+    expect(err).toBeInstanceOf(BlockedUrl);
+  });
+
+  it('returns only vetted addresses when all are public', async () => {
+    const { err, res } = await run(async () => [{ address: '93.184.216.34', family: 4 }]);
+    expect(err).toBeNull();
+    expect(res).toEqual([{ address: '93.184.216.34', family: 4 }]);
+  });
+
+  it('refuses if any answer is blocked', async () => {
+    const { err } = await run(async () => [
+      { address: '93.184.216.34', family: 4 },
+      { address: '::1', family: 6 },
+    ]);
+    expect(err).toBeInstanceOf(BlockedUrl);
   });
 });

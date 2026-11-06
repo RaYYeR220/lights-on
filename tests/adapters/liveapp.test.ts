@@ -189,3 +189,44 @@ describe('textDelta', () => {
     expect((await facts('static-b', a)).textDelta).toBeNull();
   });
 });
+
+describe('fix round 1', () => {
+  const html = (code: number) => ({ retryDelayMs: 0, fetch: async () => resp('nope', { status: code }) });
+
+  it('404 twice -> up false', async () => {
+    const r = await checkLiveApp(URL_, null, html(404));
+    expect(r.ok).toBe(true);
+    expect(r.facts).toMatchObject({ up: false, httpStatus: 404 });
+  });
+
+  it.each([401, 403, 429])('%i -> ok false, degraded, never up:false', async (code) => {
+    let n = 0;
+    const r = await checkLiveApp(URL_, null, { retryDelayMs: 0, fetch: async () => (n++, resp('x', { status: code })) });
+    expect(r).toMatchObject({ ok: false, degraded: true, facts: null, error: `blocked_by_site (${code})` });
+  });
+
+  it('prev down (null hashes) -> current up -> newDeploy false', async () => {
+    const down = (await checkLiveApp(URL_, null, html(500))).facts!;
+    expect(down.up).toBe(false);
+    expect((await facts('next-app-b', down)).newDeploy).toBe(false);
+  });
+
+  it('prev up but hashless -> newDeploy false', async () => {
+    const prev = { ...(await facts('static-a')), textHash: null, deployFingerprint: null };
+    expect((await facts('static-b', prev)).newDeploy).toBe(false);
+  });
+
+  it('pathological 200 KB asset value finishes fast', () => {
+    const evil = '/assets/' + 'a-'.repeat(1e5);
+    const page = `<html><head><title>t</title><script src="${evil}.js"></script><link href="${evil}.css" rel="modulepreload"></head><body>${evil}</body></html>`;
+    const t0 = performance.now();
+    extractFingerprint(page, URL_);
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
+
+  it('modulepreload / absolute asset URLs count', () => {
+    const p = (h: string) => `<html><head><link rel="modulepreload" href="https://cdn.x.test${h}"></head></html>`;
+    expect(extractFingerprint(p('/assets/chunk-Abc123xy.js'), URL_).deployFingerprint).not.toBeNull();
+    expect(extractFingerprint(p('/assets/logo.png'), URL_).deployFingerprint).toBeNull();
+  });
+});
