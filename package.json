@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.15",
+    "@playwright/test": "^1.65.0",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^24.19.2",
     "@types/react": "^19",
