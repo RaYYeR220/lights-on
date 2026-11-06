@@ -30,7 +30,9 @@
   --r-card: 16px;
   --r-chip: 8px;
 
-  --display: var(--font-clash), "Manrope", ui-sans-serif, system-ui, sans-serif;
+  /* Clash Display (Fontshare CSS); if it fails, a geometric sans of similar width keeps the headline shape */
+  --display: "Clash Display", "Avenir Next", "Montserrat", var(--font-manrope), "Segoe UI Variable Display", "Segoe UI",
+    ui-sans-serif, system-ui, -apple-system, Helvetica, Arial, sans-serif;
   --body: var(--font-manrope), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
