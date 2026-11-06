@@ -36,6 +36,13 @@
       "when": 1793935230830,
       "tag": "0004_attest_sent_at",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793949786569,
+      "tag": "0005_subscription_limits",
+      "breakpoints": true
     }
   ]
 }

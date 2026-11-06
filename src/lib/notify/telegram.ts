@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '@/lib/db';
 import { subscriptions } from '@/lib/db/schema';
@@ -114,12 +114,7 @@ async function getSub(db: Db, chat: string) {
   return row ?? null;
 }
 
-async function ensureSub(db: Db, chat: string) {
-  const ex = await getSub(db, chat);
-  if (ex) return ex;
-  const [row] = await db.insert(subscriptions).values({ channel: 'telegram', target: chat }).returning();
-  return row;
-}
+const AI_BRIEF_EVERY_MS = 3_600_000;
 
 /** Handle one update; replies via ctx.send. Never throws on bad input. */
 export async function handleTelegramUpdate(update: unknown, ctx: TelegramCtx): Promise<void> {
@@ -128,34 +123,41 @@ export async function handleTelegramUpdate(update: unknown, ctx: TelegramCtx): P
   const chat = String(u.data.message.chat.id);
   const c = parseCommand(u.data.message.text ?? '');
   const { db } = ctx;
+  const now = (ctx.now ?? (() => new Date()))();
 
-  const follow = async (slug?: string, address?: string): Promise<string[]> => {
+  /** Adds a project and/or address. Writes (and creates the row) only when something valid results. */
+  const follow = async (slug?: string, address?: string): Promise<{ notes: string[]; changed: boolean }> => {
     const notes: string[] = [];
-    const sub = await ensureSub(db, chat);
-    let ids = sub.projectIds;
-    let addrs = sub.addresses;
+    const sub = await getSub(db, chat);
+    let ids = sub?.projectIds ?? [];
+    let addrs = sub?.addresses ?? [];
+    let changed = false;
     if (slug) {
       const p = await getProjectBySlug(db, slug);
       if (!p || p.hidden) notes.push(`No project called ${slug}.`);
       else if (!ids.includes(p.id) && ids.length >= MAX_PROJECTS) notes.push('You follow the maximum number of projects.');
-      else { if (!ids.includes(p.id)) ids = [...ids, p.id]; notes.push(`Following ${p.name}.`); }
+      else { if (!ids.includes(p.id)) ids = [...ids, p.id]; changed = true; notes.push(`Following ${p.name}.`); }
     }
     if (address) {
       if (!addrs.includes(address) && addrs.length >= MAX_ADDRESSES) notes.push('You follow the maximum number of addresses.');
-      else { if (!addrs.includes(address)) addrs = [...addrs, address]; notes.push(`Following projects backed by ${address}.`); }
+      else { if (!addrs.includes(address)) addrs = [...addrs, address]; changed = true; notes.push(`Following projects backed by ${address}.`); }
     }
-    await db.update(subscriptions).set({ projectIds: ids, addresses: addrs }).where(eq(subscriptions.id, sub.id));
-    return notes;
+    if (changed) {
+      await db.insert(subscriptions)
+        .values({ channel: 'telegram', target: chat, projectIds: ids, addresses: addrs })
+        .onConflictDoUpdate({ target: [subscriptions.channel, subscriptions.target], set: { projectIds: ids, addresses: addrs } });
+    }
+    return { notes, changed };
   };
+  const reply = async (r: { notes: string[]; changed: boolean }, tail: string) =>
+    ctx.send(chat, r.changed ? `${r.notes.join('\n')}\n${tail}` : `${r.notes.join('\n')}\n${HELP_TEXT}`.trim());
 
   switch (c.cmd) {
-    case 'start': {
-      const notes = await follow(c.slug, c.address);
-      await ctx.send(chat, `${notes.join('\n')}\nYou will get a briefing each morning after the nightly shift. /stop ends it.`);
+    case 'start':
+      await reply(await follow(c.slug, c.address), 'You will get a briefing each morning after the nightly shift. /stop ends it.');
       return;
-    }
-    case 'watch': await ctx.send(chat, (await follow(c.slug)).join('\n')); return;
-    case 'address': await ctx.send(chat, (await follow(undefined, c.address)).join('\n')); return;
+    case 'watch': await reply(await follow(c.slug), 'You get it in the morning briefing.'); return;
+    case 'address': await reply(await follow(undefined, c.address), 'You get them in the morning briefing.'); return;
     case 'stop': {
       await db.delete(subscriptions).where(and(eq(subscriptions.channel, 'telegram'), eq(subscriptions.target, chat)));
       await ctx.send(chat, 'Stopped. No more briefings. /watch <slug> starts them again.');
@@ -167,10 +169,20 @@ export async function handleTelegramUpdate(update: unknown, ctx: TelegramCtx): P
       const shift = await getLatestFinishedNightly(db);
       if (!shift) { await ctx.send(chat, 'No nightly shift has finished yet.'); return; }
       const fromAddr = sub.addresses.length && ctx.resolveAddresses ? await ctx.resolveAddresses(sub.addresses) : [];
-      const now = (ctx.now ?? (() => new Date()))();
       const projects = await gatherBriefingProjects(db, [...sub.projectIds, ...fromAddr], shift.night, now);
       if (projects.length === 0) { await ctx.send(chat, 'You follow nothing yet. Try /watch <slug>.'); return; }
-      const b = await buildBriefing({ projects, date: nightOf(shift.night) }, ctx.briefing ?? {});
+      // AI polish: on demand only, at most once per chat per hour (atomic claim); everything else is the template.
+      let ai: BriefingDeps['ai'];
+      if (ctx.briefing?.ai) {
+        const won = await db.update(subscriptions).set({ aiBriefAt: now })
+          .where(and(
+            eq(subscriptions.id, sub.id),
+            or(isNull(subscriptions.aiBriefAt), lt(subscriptions.aiBriefAt, new Date(now.getTime() - AI_BRIEF_EVERY_MS))),
+          ))
+          .returning({ id: subscriptions.id });
+        if (won.length) ai = ctx.briefing.ai;
+      }
+      const b = await buildBriefing({ projects, date: nightOf(shift.night) }, { ...ctx.briefing, ai });
       await ctx.send(chat, b.text);
       return;
     }

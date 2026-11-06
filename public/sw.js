@@ -4,7 +4,7 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
   const title = typeof data.title === 'string' && data.title ? data.title : 'Lights On';
   const body = typeof data.body === 'string' ? data.body : '';
-  const url = typeof data.url === 'string' && data.url.startsWith('/') ? data.url : '/night';
+  const url = typeof data.url === 'string' && data.url.startsWith('/') && !data.url.startsWith('//') ? data.url : '/night';
   event.waitUntil(self.registration.showNotification(title, { body, data: { url }, tag: 'lights-on-briefing' }));
 });
 

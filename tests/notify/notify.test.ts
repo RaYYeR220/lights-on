@@ -7,6 +7,7 @@ import { subscriptions, trancheEvents } from '@/lib/db/schema';
 import { getDb, type Db } from '@/lib/db';
 import path from 'node:path';
 import { migrate } from 'drizzle-orm/pglite/migrator';
+import { vapidSubject, isAllowedPushEndpoint } from '@/lib/notify/webpush';
 import { buildBriefing, templateBriefing, type BriefingProject } from '@/lib/notify/briefing';
 import { encodeStartToken, handleTelegramUpdate, parseCommand, HELP_TEXT } from '@/lib/notify/telegram';
 import { onShiftFinalized } from '@/lib/notify/send';
@@ -15,6 +16,8 @@ import { POST as telegramPOST } from '@/app/api/telegram/route';
 import { POST as subscribePOST, DELETE as subscribeDELETE } from '@/app/api/push/subscribe/route';
 import type { NightRow } from '@/lib/db/schema';
 import type { Status } from '@/lib/types';
+
+vi.setConfig({ testTimeout: 30_000 });
 
 const ADDR = '0x' + 'ab'.repeat(20);
 
@@ -148,7 +151,7 @@ describe('onShiftFinalized', () => {
     const sendTelegram = vi.fn(async () => ({ ok: true as const }));
     const deps = { db, sendTelegram, now: () => new Date('2026-11-06T05:31:00Z'), sleep: async () => {} };
     expect(await onShiftFinalized(shift.id, deps)).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(await onShiftFinalized(shift.id, deps)).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(await onShiftFinalized(shift.id, deps)).toEqual({ sent: 0, skipped: 0, failed: 0 });
     expect(sendTelegram).toHaveBeenCalledTimes(1);
     const text = (sendTelegram.mock.calls[0] as unknown as [string, string])[1];
     expect(text).toContain('Shipped (1): Alpha');
@@ -172,7 +175,7 @@ describe('onShiftFinalized', () => {
     const resolveAddresses = vi.fn(async () => [a.id]);
     const r = await onShiftFinalized(shift.id, { db, sendTelegram, resolveAddresses, sleep: async () => {} });
     expect(resolveAddresses).toHaveBeenCalledWith([ADDR]);
-    expect(r).toEqual({ sent: 1, skipped: 2, failed: 1 });
+    expect(r).toEqual({ sent: 1, skipped: 1, failed: 1 });
   });
 
   it('drops a subscription whose bot was blocked and does nothing without a finished nightly shift', async () => {
@@ -187,7 +190,7 @@ describe('onShiftFinalized', () => {
 
   it('delivers web push and deletes expired endpoints', async () => {
     const { db, a, shift } = await setup();
-    const sub = { endpoint: 'https://push.example/abc', keys: { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) } };
+    const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) } };
     await db.insert(subscriptions).values({ channel: 'webpush', target: JSON.stringify(sub), projectIds: [a.id], addresses: [ADDR] });
     const sendWebPush = vi.fn(async () => ({ ok: true as const }));
     await onShiftFinalized(shift.id, { db, sendWebPush, sleep: async () => {} });
@@ -214,7 +217,7 @@ describe('onShiftFinalized', () => {
 });
 
 describe('sendPush', () => {
-  const sub = { endpoint: 'https://push.example/x', keys: { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) } };
+  const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/x', keys: { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) } };
   const cfg = { publicKey: 'pub', privateKey: 'priv', subject: 'https://site/' };
   it('maps 404/410 to gone', async () => {
     const mk = (statusCode: number) => async () => { throw Object.assign(new Error('x'), { statusCode }); };
@@ -282,13 +285,14 @@ describe('telegram route', () => {
 });
 
 describe('push subscribe route', () => {
-  const good = { endpoint: 'https://push.example/e1', keys: { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) } };
+  const good = { endpoint: 'https://fcm.googleapis.com/fcm/send/e1', keys: { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) } };
   const call = (method: 'POST' | 'DELETE', body: unknown) =>
     new Request('http://localhost/api/push/subscribe', { method, body: JSON.stringify(body) });
   it('validates, upserts by endpoint, deletes', async () => {
     const db: Db = await getDb('pglite://memory');
     await migrate(db as never, { migrationsFolder: path.resolve(__dirname, '../../drizzle') });
     process.env.DATABASE_URL = 'pglite://memory';
+    process.env.INTERNAL_RUN_TOKEN = 'salt-token';
     await seedProject(db, 'zeta', { name: 'Zeta' });
 
     expect((await subscribePOST(call('POST', { subscription: { ...good, endpoint: 'http://insecure/x' } }))).status).toBe(400);
@@ -305,5 +309,143 @@ describe('push subscribe route', () => {
     expect((await subscribeDELETE(call('DELETE', { endpoint: good.endpoint }))).status).toBe(200);
     rows = await db.select().from(subscriptions);
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe('push endpoint allowlist', () => {
+  it.each([
+    'https://fcm.googleapis.com/fcm/send/abc',
+    'https://updates.push.services.mozilla.com/wpush/v2/abc',
+    'https://web.push.apple.com/abc',
+    'https://par02p.notify.windows.com/w/?token=x',
+    'https://api.push.apple.com/3/device/x',
+    'https://FCM.googleapis.com./fcm/send/x',
+  ])('accepts %s', (u) => expect(isAllowedPushEndpoint(u)).toBe(true));
+
+  it.each([
+    'https://10.0.0.1/x',
+    'https://[::1]/x',
+    'https://evil.com/x',
+    'https://fcm.googleapis.com.evil.com/x',
+    'https://fcm.googleapis.com:8443/x',
+    'https://evilfcm.googleapis.com/x',
+    'https://x.evilnotify.windows.com/x',
+    'https://notify.windows.com/x',
+    'http://fcm.googleapis.com/x',
+    'https://user:pw@fcm.googleapis.com/x',
+    'not a url',
+  ])('rejects %s', (u) => expect(isAllowedPushEndpoint(u)).toBe(false));
+
+  it('vapid subject: https site url, else mailto', () => {
+    expect(vapidSubject('https://lights.example/')).toBe('https://lights.example/');
+    expect(vapidSubject('http://localhost:3000')).toBe('mailto:noreply@localhost');
+  });
+});
+
+describe('push subscribe limits', () => {
+  const keys = { p256dh: 'p'.repeat(20), auth: 'a'.repeat(10) };
+  const mk = (n: number, ip = '203.0.113.9') => new Request('http://localhost/api/push/subscribe', {
+    method: 'POST', headers: { 'x-real-ip': ip },
+    body: JSON.stringify({ subscription: { endpoint: `https://fcm.googleapis.com/fcm/send/n${n}`, keys }, addresses: [ADDR] }),
+  });
+  it('rejects bad hosts with 400; the 6th new subscription from one IP in an hour gets 429', async () => {
+    const db = await getDb('pglite://memory');
+    await migrate(db as never, { migrationsFolder: path.resolve(__dirname, '../../drizzle') });
+    process.env.DATABASE_URL = 'pglite://memory';
+    process.env.INTERNAL_RUN_TOKEN = 'salt-token';
+    await db.delete(subscriptions);
+    for (const bad of ['https://10.0.0.1/x', 'https://evil.com/x', 'https://fcm.googleapis.com.evil.com/x', 'https://fcm.googleapis.com:8443/x']) {
+      const r = await subscribePOST(new Request('http://localhost/x', {
+        method: 'POST', body: JSON.stringify({ subscription: { endpoint: bad, keys }, addresses: [ADDR] }),
+      }));
+      expect(r.status).toBe(400);
+    }
+    for (let i = 1; i <= 5; i++) expect((await subscribePOST(mk(i))).status).toBe(200);
+    expect((await subscribePOST(mk(1))).status).toBe(200); // re-subscribing an existing endpoint is an update
+    expect((await subscribePOST(mk(6))).status).toBe(429);
+    expect((await subscribePOST(mk(6, '198.51.100.7'))).status).toBe(200); // another IP is unaffected
+    const none = new Request('http://localhost/x', {
+      method: 'POST', body: JSON.stringify({ subscription: { endpoint: 'https://fcm.googleapis.com/a', keys } }),
+    });
+    expect((await subscribePOST(none)).status).toBe(400); // nothing to follow
+    const rows = await db.select().from(subscriptions);
+    expect(rows.every((r) => r.endpointHash && r.endpointHash.length === 64)).toBe(true);
+  });
+});
+
+describe('atomic sends and paging', () => {
+  it('two concurrent calls send once per subscription', async () => {
+    const { db, a, shift } = await setup();
+    await db.insert(subscriptions).values(Array.from({ length: 30 }, (_, i) => ({ channel: 'telegram' as const, target: `c${i}`, projectIds: [a.id] })));
+    const sent: string[] = [];
+    const sendTelegram = vi.fn(async (chat: string) => { sent.push(chat); return { ok: true as const }; });
+    const deps = { db, sendTelegram, sleep: async () => {} };
+    const [r1, r2] = await Promise.all([onShiftFinalized(shift.id, deps), onShiftFinalized(shift.id, deps)]);
+    expect(r1.sent + r2.sent).toBe(30);
+    expect(new Set(sent).size).toBe(30);
+    expect(sent).toHaveLength(30);
+  });
+
+  it('250 subscriptions across two budget-limited calls each get exactly one send', async () => {
+    const { db, a, shift } = await setup();
+    await db.insert(subscriptions).values(Array.from({ length: 250 }, (_, i) => ({ channel: 'telegram' as const, target: `d${i}`, projectIds: [a.id] })));
+    const sent: string[] = [];
+    const sendTelegram = vi.fn(async (chat: string) => { sent.push(chat); return { ok: true as const }; });
+    let t = 0;
+    const mkDeps = (budgetMs: number) => ({ db, sendTelegram, clock: () => t, sleep: async (ms: number) => { t += ms; }, budgetMs });
+    const r1 = await onShiftFinalized(shift.id, mkDeps(6250));
+    expect(r1.sent).toBeGreaterThan(100);
+    expect(r1.sent).toBeLessThan(250);
+    t = 0;
+    const r2 = await onShiftFinalized(shift.id, mkDeps(60_000));
+    expect(r1.sent + r2.sent).toBe(250);
+    expect(new Set(sent).size).toBe(250);
+    expect(sent).toHaveLength(250);
+  });
+
+  it('a failed send gives the claim back so a later call retries', async () => {
+    const { db, a, shift } = await setup();
+    await db.insert(subscriptions).values({ channel: 'telegram', target: 'f1', projectIds: [a.id] });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const bad = vi.fn(async () => ({ ok: false as const, blocked: false, code: 'http_500' }));
+    expect((await onShiftFinalized(shift.id, { db, sendTelegram: bad, sleep: async () => {} })).failed).toBe(1);
+    expect((await db.select().from(subscriptions))[0].lastSentAt).toBeNull();
+    const good = vi.fn(async () => ({ ok: true as const }));
+    expect((await onShiftFinalized(shift.id, { db, sendTelegram: good, sleep: async () => {} })).sent).toBe(1);
+  });
+});
+
+describe('telegram: subscriptions only when valid, AI once per hour', () => {
+  it('/watch nope creates nothing; the unique index keeps one row per chat', async () => {
+    const { db } = await setup();
+    const sent: string[] = [];
+    const ctx = { db, send: async (_c: string, t: string) => { sent.push(t); } };
+    await handleTelegramUpdate({ message: { text: '/watch nope', chat: { id: 5 } } }, ctx);
+    await handleTelegramUpdate({ message: { text: '/address 0x12', chat: { id: 5 } } }, ctx);
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
+    expect(sent[0]).toContain(HELP_TEXT);
+    await db.insert(subscriptions).values({ channel: 'telegram', target: '5' });
+    await expect(db.insert(subscriptions).values({ channel: 'telegram', target: '5' })).rejects.toThrow();
+  });
+
+  it('/brief uses the AI at most once per chat per hour', async () => {
+    const { db, a } = await setup();
+    await db.insert(subscriptions).values({ channel: 'telegram', target: '8', projectIds: [a.id] });
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 500, text: async () => '' }));
+    const briefing = { ai: { budget: async () => true, fetchImpl, apiKey: 'k' } };
+    const ctx = { db, send: async () => {}, briefing, now: () => new Date('2026-11-06T08:00:00Z') };
+    const msg = { message: { text: '/brief', chat: { id: 8 } } };
+    await handleTelegramUpdate(msg, ctx);
+    await handleTelegramUpdate(msg, ctx);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await handleTelegramUpdate(msg, { ...ctx, now: () => new Date('2026-11-06T09:01:00Z') });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('copy rule on the template', () => {
+  it('a banned word in a project name is blanked in the template', () => {
+    const t = templateBriefing({ projects: [proj('Rug Pull Tracker', 'shipped', 'ok')], date: 20261106 }, Date.now());
+    expect(t).not.toMatch(/\brug\b/i);
   });
 });
