@@ -117,9 +117,21 @@ export async function getBackerView(db: Db, address: Address, deps: Partial<Back
   };
 }
 
-/** Telegram deep-link token: base64url of {"a": address}, the shape the bot's /start decodes. */
+/** Telegram /start payload for a wallet: `a_` + its 40 hex digits (no 0x), 42 chars, inside Telegram's 64. */
 export function telegramStartToken(address: string): string {
-  return Buffer.from(JSON.stringify({ a: address }), 'utf8').toString('base64url');
+  return `a_${address.replace(/^0x/i, '').toLowerCase()}`;
+}
+
+/** Telegram /start payload for one project: `p_` + slug. */
+export function telegramProjectToken(slug: string): string {
+  return `p_${slug}`;
+}
+
+/** https://t.me/<bot>?start=<payload>, or null when no bot is configured or the payload would not fit. */
+export function telegramLink(payload: string, bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT): string | null {
+  const name = bot?.replace(/^@/, '').trim();
+  if (!name || !/^[A-Za-z0-9_]{3,64}$/.test(name) || !/^[A-Za-z0-9_-]{1,64}$/.test(payload)) return null;
+  return `https://t.me/${name}?start=${payload}`;
 }
 
 /** "0x60bc…e345" */

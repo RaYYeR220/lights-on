@@ -13,7 +13,7 @@ export function SiteFooter() {
           <Link href="/methodology">Methodology</Link>
           <Link href="/docs">Docs</Link>
           <Link href="/docs#api">API</Link>
-          <a href="#repo">GitHub</a>
+          <a href="https://github.com/RaYYeR220/lights-on" target="_blank" rel="noreferrer">GitHub</a>
           <Link className="base" href="/methodology#attestation">
             <i className="sw sw-shipped" aria-hidden="true" />
             Attested on Base

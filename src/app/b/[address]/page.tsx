@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { getDb } from "@/lib/db";
 import { checkBriefingLimit } from "@/lib/briefingLimit";
 import { safeErrorCode } from "@/lib/net/redact";
-import { getBackerView, resolveBacker, shortAddress, telegramStartToken, type BackerView } from "@/lib/views/backer";
+import { getBackerView, resolveBacker, shortAddress, telegramLink, telegramStartToken, type BackerView } from "@/lib/views/backer";
 import { nightLabel, STATUS_LABEL } from "@/lib/views/reasons";
 import { BagsForm } from "@/components/bags/BagsForm";
 import { PushSubscribe } from "@/components/bags/PushSubscribe";
@@ -84,7 +84,7 @@ export default async function BackerPage({ params }: PageProps<"/b/[address]">) 
     return <Problem title={`Bags of ${shortAddress(r.address)}`} text="The lookup failed just now. Try again in a minute." />;
   }
 
-  const bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT?.replace(/^@/, "");
+  const tg = telegramLink(telegramStartToken(view.address));
   const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   const n = view.projects.length;
   return (
@@ -155,18 +155,15 @@ export default async function BackerPage({ params }: PageProps<"/b/[address]">) 
               {view.briefing}
             </pre>
             <div className={s.sub}>
-              {bot ? (
+              {tg ? (
                 <div>
-                  <a className="btn btn-primary btn-sm" href={`https://t.me/${bot}?start=${telegramStartToken(view.address)}`} target="_blank" rel="noreferrer">
+                  <a className="btn btn-primary btn-sm" href={tg} target="_blank" rel="noreferrer" data-testid="telegram-link">
                     Get it on Telegram
                   </a>
-                  <p className={s.small}>
-                    Or send <code>/address {view.address}</code> to @{bot}.
-                  </p>
                 </div>
               ) : null}
               {vapid ? <PushSubscribe address={view.address} vapidKey={vapid} /> : null}
-              {!bot && !vapid ? <p className={s.small}>Subscriptions open on the deployed site.</p> : null}
+              {!tg && !vapid ? <p className={s.small}>Subscriptions open on the deployed site.</p> : null}
             </div>
           </section>
         ) : null}
