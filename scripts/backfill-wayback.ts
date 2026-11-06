@@ -15,6 +15,22 @@ const DAY = 86_400_000;
 const GAP_MS = 1_500;
 const headers = { 'user-agent': WAYBACK_UA };
 
+/** Wayback resets connections when it is busy: retry with backoff, then give up on this request only. */
+async function wbFetch(url: string, timeoutMs: number) {
+  let last: unknown;
+  for (let i = 0; i < 4; i++) {
+    try {
+      const res = await safeFetch(url, { headers, timeoutMs });
+      if (res.status !== 429 && res.status < 500) return res;
+      last = new Error(`http ${res.status}`);
+    } catch (e) {
+      last = e;
+    }
+    await sleep(5_000 * (i + 1));
+  }
+  throw last;
+}
+
 async function main() {
   const days = daysArg();
   const only = arg('only');
@@ -30,7 +46,7 @@ async function main() {
   for (const p of projects) {
     const row: Record<string, unknown> = { project: p.slug, url: p.liveUrl };
     try {
-      const cdx = await safeFetch(cdxUrl(p.liveUrl!, since), { headers, timeoutMs: 40_000 });
+      const cdx = await wbFetch(cdxUrl(p.liveUrl!, since), 40_000);
       if (cdx.status !== 200) throw new Error(`cdx http ${cdx.status}`);
       const all = parseCdx(cdx.body);
       const picked = sampleCaptures(all, MAX_CAPTURES);
@@ -39,7 +55,7 @@ async function main() {
       for (const c of picked) {
         await sleep(GAP_MS);
         try {
-          const res = await safeFetch(captureUrl(c), { headers, timeoutMs: 30_000 });
+          const res = await wbFetch(captureUrl(c), 30_000);
           if (res.status !== 200) continue;
           const f = extractFingerprint(res.body, c.original);
           fps.push({ timestamp: c.timestamp, deployFingerprint: f.deployFingerprint });
