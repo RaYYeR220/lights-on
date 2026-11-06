@@ -15,54 +15,53 @@ const TOC = [
 
 interface Endpoint {
   path: string;
-  live: boolean;
   text: string;
   shape?: string;
 }
 
+/** Every route below is built and served by this deployment (see /api/openapi.json for the full schemas). */
 const ENDPOINTS: Endpoint[] = [
   {
+    path: "GET /api/v1/projects?with=lastNight,history",
+    text: "Every listed project with its latest status and 30-night record. history adds the last 90 nights as one 90-letter string, oldest first, last = today (UTC): S shipped, B building, Q quiet, D down, U unavailable, . no night. Community-added watches are unlisted.",
+    shape: `{ generatedAt, projects: [{ slug, name, tagline, source, bay, status, statusSource?,
+  confirmedAt, summary, record: { streak, lit30, lastShip }, history? }] }`,
+  },
+  {
+    path: "GET /api/v1/projects/{slug}",
+    text: "One project: sources, status, record, its latest night with reasons and attestation, and the Vibestarter tranche schedule with any open challenge window.",
+  },
+  {
+    path: "GET /api/v1/projects/{slug}/nights?from=yyyymmdd&to=yyyymmdd",
+    text: "A project's nights, observed and reconstructed, each with its reasons, evidence hash and attestation. Default: the last 90 nights; at most 366.",
+  },
+  {
     path: "GET /api/v1/evidence/{hash}",
-    live: true,
     text: "The evidence bundle of one night, as canonical JSON: keccak256 of the response body equals the hash. Cached forever (content-addressed); 404 when unknown.",
   },
   {
     path: "GET /api/v1/briefing/{address}",
-    live: true,
     text: "The projects a wallet backed on Vibestarter or holds as a watched token, and its morning briefing. Accepts a 0x address or an ENS name.",
     shape: `{ address, projects: [{ slug, name, via, amountWei?, balance?, symbol? }],
   briefing: { text, aiOk }, degraded }`,
   },
   {
-    path: "GET /api/v1/projects?with=lastNight",
-    live: false,
-    text: "Every watched project with its latest status and record.",
-    shape: `{ projects: [{ slug, name, tagline, source, status, confirmedAt,
-  summary, record: { streak, lit30, lastShip } }] }`,
-  },
-  {
-    path: "GET /api/v1/projects/{slug}",
-    live: false,
-    text: "One project: sources, status, record and latest attestation.",
-  },
-  {
-    path: "GET /api/v1/projects/{slug}/nights",
-    live: false,
-    text: "A project's nights, observed and reconstructed, each with its evidence hash and attestation.",
+    path: "POST /api/v1/watch",
+    text: "Ask the watcher to add a project: { liveUrl, repo?, contract? }. Rate limited (3 a day per caller, 50 a day overall). The project stays unlisted and is reachable by slug once its first check succeeds.",
+    shape: `{ slug?, status: "queued" | "exists" }`,
   },
   {
     path: "GET /api/openapi.json · /llms.txt",
-    live: false,
-    text: "The machine-readable description of all of the above.",
+    text: "The OpenAPI 3.1 description of every endpoint above, and a plain-text guide for language models (rules, endpoints, how to verify).",
   },
 ];
 
 const TOOLS = [
-  ["list_projects", "every watched project with its latest status"],
-  ["get_project", "one project by slug"],
+  ["list_projects", "every listed project with its latest status; history: true adds the 90-letter history"],
+  ["get_project", "one project by slug, with its tranche schedule"],
   ["get_night", "one project's night: status, reasons, evidence hash, attestation"],
   ["is_still_shipping", "{ slug, status, streak, lit30, lastShip, lastNight, attestationUid }"],
-  ["get_briefing", "the briefing for a wallet address"],
+  ["get_briefing", "the briefing for a wallet address or .eth name"],
   ["watch_project", "ask the agent to watch a project (rate limited)"],
 ] as const;
 
@@ -91,15 +90,15 @@ export default function DocsPage() {
               REST API
             </h2>
             <p>
-              Base URL <code>{site}</code>. JSON over HTTPS, read only. Endpoints marked <em>planned</em> are part of this
-              build and land before launch; their shapes are fixed.
+              Base URL <code>{site}</code>. JSON over HTTPS, no keys, open CORS, cached for 5 minutes. Unknown query
+              parameters are answered with a redirect to the canonical URL.
             </p>
             <div style={{ marginTop: 16 }}>
               {ENDPOINTS.map((e) => (
                 <div key={e.path} className={s.ep}>
                   <div className={s.epHead}>
                     <span>{e.path}</span>
-                    <span className={`tag ${e.live ? s.live : ""}`}>{e.live ? "live" : "planned"}</span>
+                    <span className={`tag ${s.live}`}>live</span>
                   </div>
                   <p>{e.text}</p>
                   {e.shape ? <pre className={s.pre}>{e.shape}</pre> : null}
@@ -113,8 +112,8 @@ export default function DocsPage() {
               MCP for agents
             </h2>
             <p>
-              A Streamable HTTP MCP server at <code>{site}/api/mcp</code> (planned, part of this build) exposes the same reads
-              as tools:
+              A Streamable HTTP MCP server at <code>{site}/api/mcp</code> (live) exposes the same reads as tools, and the
+              agent's ERC-8004 registration is at <code>{site}/.well-known/agent-registration.json</code>:
             </p>
             <ul>
               {TOOLS.map(([name, text]) => (

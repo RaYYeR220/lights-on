@@ -68,3 +68,15 @@ describe('claim copy', () => {
     expect(trancheKind('REFUNDED')).toBe('fail');
   });
 });
+
+describe('/docs', () => {
+  it('lists every built endpoint as live and nothing as planned', async () => {
+    const { default: DocsPage } = await import('@/app/docs/page');
+    const { GET: openapi } = await import('@/app/api/openapi.json/route');
+    const html = renderToStaticMarkup(DocsPage());
+    expect(html).not.toMatch(/planned/i);
+    const paths = Object.keys(JSON.parse(await openapi().text()).paths as Record<string, unknown>);
+    for (const p of paths) expect(html).toContain(p.replace(/\{(\w+)\}/g, '{$1}'));
+    for (const t of ['/api/mcp', '/llms.txt', '/api/openapi.json', 'POST /api/v1/watch', 'agent-registration.json']) expect(html).toContain(t);
+  });
+});

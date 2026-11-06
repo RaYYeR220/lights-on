@@ -74,7 +74,7 @@ interface Orderable {
   source: string;
   name: string;
   slug: string;
-  /** Stored window position (a planned projects.bay column); used first when present. */
+  /** Stored window position (projects.bay); used first when present. */
   bay?: unknown;
 }
 const bayOf = (p: Orderable): number | null => (typeof p.bay === 'number' && Number.isFinite(p.bay) ? p.bay : null);

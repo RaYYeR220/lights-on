@@ -36,7 +36,7 @@ export const projects = pgTable('projects', {
   addedBy: text('added_by'),
   createdAt: tsz('created_at').notNull().defaultNow(),
   hidden: boolean('hidden').notNull().default(false),
-  /** Stable window position in the tower: assigned once (max+1) when the project is created, never changed. */
+  /** Stable window position in the tower (1 = top left): max+1 at creation, kept across nights (reordered once before launch by scripts/reassign-bays.ts). */
   bay: integer('bay').unique(),
 }, () => [check('projects_source_chk', inList('source', SOURCES))]);
 

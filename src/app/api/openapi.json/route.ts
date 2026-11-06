@@ -79,7 +79,7 @@ export function GET(): Response {
                       properties: {
                         slug: { type: 'string' }, name: { type: 'string' }, tagline: { type: ['string', 'null'] },
                         source: { type: 'string', enum: ['vibestarter', 'vibeathon01', 'base', 'community'] },
-                        bay: { type: ['integer', 'null'], description: 'Stable window position, never reassigned' },
+                        bay: { type: ['integer', 'null'], description: 'Stable window position in the tower (1 = top left); kept across nights' },
                         status: { ...nullableStatus, description: 'Latest observed night, else latest reconstructed (see statusSource)' },
                         statusSource: { type: 'string', enum: ['reconstructed'], description: 'Present only when status is not from an observed night' },
                         confirmedAt: { type: ['string', 'null'], format: 'date-time', description: 'When the latest observed night was recorded' },
