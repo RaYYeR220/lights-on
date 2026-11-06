@@ -8,6 +8,7 @@ export interface FetchInit {
   headers?: Record<string, string>;
   timeoutMs?: number;
   maxBytes?: number;
+  signal?: AbortSignal;
 }
 export type FetchLike = (url: string, init?: FetchInit) => Promise<SafeFetchResult>;
 

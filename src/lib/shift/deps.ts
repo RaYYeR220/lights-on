@@ -48,6 +48,8 @@ export interface ShiftDeps {
   /** Base RPC for chain/vibestarter adapters (defaults to getBaseClient() inside them). */
   rpc?: RpcLike;
   githubToken?: string;
+  /** Test seam: per-stage deadlines (ms) and the live run's total budget; defaults in run.ts (DEADLINES_MS). */
+  deadlinesMs?: Partial<Record<'repo' | 'liveapp' | 'chain' | 'vibestarter' | 'explain' | 'liveTotal', number>>;
   /** ERC-8004 agent id of the watcher. Missing or 0 -> nothing is attested. */
   agentId?: bigint;
   siteUrl?: string;

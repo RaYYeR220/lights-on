@@ -19,6 +19,8 @@ interface Base {
   fetchImpl?: FetchLike;
   /** Defaults to process.env.VENICE_API_KEY. */
   apiKey?: string;
+  /** Caller's abort (the run's explain deadline), combined with the timeout. */
+  signal?: AbortSignal;
 }
 export type VeniceJSONOpts<T> = Base & { schema: z.ZodType<T>; jsonSchema: object; schemaName?: string };
 /**
@@ -54,7 +56,9 @@ async function call(
         ...(responseFormat ? { response_format: responseFormat } : {}),
         venice_parameters: { include_venice_system_prompt: false },
       }),
-      signal: AbortSignal.timeout(o.timeoutMs ?? 20_000),
+      signal: o.signal
+        ? AbortSignal.any([AbortSignal.timeout(o.timeoutMs ?? 20_000), o.signal])
+        : AbortSignal.timeout(o.timeoutMs ?? 20_000),
     });
     if (!res.ok) return { ok: false, error: `http_${res.status}`, sent: true, tokens: null };
     let body: { choices?: { message?: { content?: unknown } }[]; usage?: { total_tokens?: unknown } };

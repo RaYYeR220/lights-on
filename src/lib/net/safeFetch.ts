@@ -18,6 +18,8 @@ export interface SafeFetchInit {
   headers?: Record<string, string>;
   timeoutMs?: number;
   maxBytes?: number;
+  /** Caller's abort (e.g. a per-adapter deadline): aborts the request like the timeout does. */
+  signal?: AbortSignal;
   lookup?: LookupFn;
   /** TEST ONLY: skip the address blocklist (lets integration tests hit a local server). Never set in prod code. */
   allowPrivateForTests?: boolean;
@@ -156,7 +158,12 @@ export async function safeFetch(url: string, init: SafeFetchInit = {}): Promise<
   const started = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+  const outer = init.signal;
+  const onOuter = () => ctrl.abort(outer?.reason ?? new Error('aborted'));
+  if (outer?.aborted) onOuter();
+  else outer?.addEventListener('abort', onOuter, { once: true });
   try {
+    if (ctrl.signal.aborted) throw ctrl.signal.reason;
     let current: URL;
     try {
       current = new URL(url);
@@ -194,6 +201,7 @@ export async function safeFetch(url: string, init: SafeFetchInit = {}): Promise<
     throw new Error(`too many redirects (>${MAX_HOPS})`);
   } finally {
     clearTimeout(timer);
+    outer?.removeEventListener('abort', onOuter);
     void agent.close().catch(() => {});
   }
 }

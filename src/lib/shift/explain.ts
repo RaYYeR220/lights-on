@@ -24,6 +24,8 @@ export interface ExplainDeps {
   budget: (n: number) => Promise<boolean>;
   fetchImpl?: FetchLike;
   apiKey?: string;
+  /** Aborts the Venice calls (the run's explain deadline). */
+  signal?: AbortSignal;
 }
 
 const BANNED = /\b(scam|rug|dead|abandoned|fraud)\b/i;
@@ -149,7 +151,7 @@ export async function explainNight(b: EvidenceBundle, d: Decision, deps: Explain
     return { aiOk: true, summary: sanitizeSummary(TEMPLATES[d.status]), notable: [], aiSubstance: null, model: null, tokens: 0, refundable: 0 };
   }
 
-  const net = { fetchImpl: deps.fetchImpl, apiKey: deps.apiKey };
+  const net = { fetchImpl: deps.fetchImpl, apiKey: deps.apiKey, ...(deps.signal ? { signal: deps.signal } : {}) };
 
   const classifyUser = `Items to classify:\n${input.text}`;
   const clsReserve = CLASSIFY_MAX_TOKENS + est(CLASSIFY_SYSTEM.length + classifyUser.length);

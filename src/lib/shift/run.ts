@@ -44,6 +44,49 @@ export interface RunResult {
 }
 
 const MAX_SNAPSHOT_TEXT = 200_000;
+/**
+ * Wall-clock caps per stage (ms), nightly and live alike: a slow or rate-limited source (dozens of RPC calls at 10 s x 3
+ * attempts) can no longer push a run past its function's maxDuration. A source that misses its cap is recorded as
+ * ok:false 'deadline' (fetches are aborted; RPC calls are raced and ignored). A live run also has a total budget: each
+ * stage gets min(its cap, what is left), and the receipt wait is cut to what is left (>= 5 s).
+ */
+export const DEADLINES_MS = {
+  repo: 25_000, liveapp: 25_000, chain: 30_000, vibestarter: 20_000, explain: 30_000, liveTotal: 90_000,
+} as const;
+const MIN_RECEIPT_WAIT_MS = 5_000;
+export const DEADLINE = 'deadline';
+
+/**
+ * Race `run` against `ms`. On the deadline, `onDeadline()` is the result and the job's signal is aborted (after the
+ * result is fixed, so the abort can never win the race); a late result or rejection of the job is ignored.
+ */
+async function withDeadline<T>(ms: number, run: (signal: AbortSignal) => Promise<T>, onDeadline: () => T): Promise<T> {
+  const ctrl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(onDeadline());
+      ctrl.abort(new Error(DEADLINE));
+    }, Math.max(0, ms));
+  });
+  try {
+    return await Promise.race([run(ctrl.signal), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+type Stage = Exclude<keyof typeof DEADLINES_MS, 'liveTotal'>;
+/** Per-run clock: a stage's cap, cut to the live budget left. */
+function stageClock(deps: ShiftDeps, kind: Kind) {
+  const caps = { ...DEADLINES_MS, ...(deps.deadlinesMs ?? {}) };
+  const end = kind === 'live' ? Date.now() + caps.liveTotal : Number.POSITIVE_INFINITY;
+  return {
+    cap: (s: Stage) => Math.max(0, Math.min(caps[s], end - Date.now())),
+    left: () => end - Date.now(),
+  };
+}
+type StageClock = ReturnType<typeof stageClock>;
 /** The live stream should not hang on a slow receipt; the tx is already stored. */
 export const LIVE_RECEIPT_TIMEOUT_MS = 30_000;
 const DAY_MS = 86_400_000;
@@ -135,6 +178,7 @@ function detailOf(name: SourceName, r: AnyResult, hadPrev: boolean): string {
 /** Run the applicable adapters in parallel; each is isolated (a throw becomes ok:false with a fixed code). */
 async function gather(
   project: ProjectRow, window: TimeWindow, prev: Prev, deps: ShiftDeps, step: (k: StepKey, s: Step['state'], d?: string) => void,
+  clock: StageClock,
 ): Promise<{ sources: Sources; liveText: string | null; repoEtag: string | null }> {
   const a = resolveAdapters(deps);
   const contracts = (project.contracts ?? []).filter((c) => c.role !== 'deployer');
@@ -143,34 +187,36 @@ async function gather(
   let liveText: string | null = null;
   let repoEtag: string | null = null;
 
-  const jobs: Record<SourceName, (() => Promise<AnyResult>) | null> = {
+  // Every outbound fetch of a job carries the job's deadline signal.
+  const fetchFor = (signal: AbortSignal): ShiftDeps['fetch'] => (url, init) => deps.fetch(url, { ...init, signal });
+  const jobs: Record<SourceName, ((signal: AbortSignal) => Promise<AnyResult>) | null> = {
     repo: project.repoHost && project.repo
-      ? async () => {
+      ? async (signal) => {
         const r = await a.repo(
           { host: project.repoHost!, repo: project.repo!, branch: project.defaultBranch ?? undefined },
           window,
           prev.repo?.headSha ?? null,
-          { fetch: deps.fetch, token: deps.githubToken, budget: (n) => deps.budget('github_calls', n), prevEtag: prev.repo?.etag ?? null },
+          { fetch: fetchFor(signal), token: deps.githubToken, budget: (n) => deps.budget('github_calls', n), prevEtag: prev.repo?.etag ?? null },
         );
-        repoEtag = r.etag;
+        if (!signal.aborted) repoEtag = r.etag;
         return r.result;
       }
       : null,
     liveapp: project.liveUrl
-      ? async () => {
+      ? async (signal) => {
         const r = await a.liveapp(project.liveUrl!, prev.live?.facts ?? null, {
-          fetch: deps.fetch,
+          fetch: fetchFor(signal),
           ...(prev.live?.text != null ? { prevText: prev.live.text } : {}),
         });
-        liveText = r.text;
+        if (!signal.aborted) liveText = r.text;
         return r.result;
       }
       : null,
     chain: contracts.length > 0 || deployer
-      ? () => a.chain(contracts, deployer, window, { fetch: deps.fetch, ...(deps.rpc ? { client: deps.rpc } : {}) })
+      ? (signal) => a.chain(contracts, deployer, window, { fetch: fetchFor(signal), ...(deps.rpc ? { client: deps.rpc } : {}) })
       : null,
     vibestarter: vs?.campaignId && vs.escrow
-      ? () => a.vibestarter(vs.campaignId, vs.escrow, window, { fetch: deps.fetch, ...(deps.rpc ? { client: deps.rpc } : {}) })
+      ? (signal) => a.vibestarter(vs.campaignId, vs.escrow, window, { fetch: fetchFor(signal), ...(deps.rpc ? { client: deps.rpc } : {}) })
       : null,
   };
 
@@ -186,7 +232,8 @@ async function gather(
     let state: Step['state'];
     let detail: string;
     try {
-      res = plain(await job());
+      const missed: AnyResult = { source: name, tier: 'verified', ok: false, facts: null, error: DEADLINE };
+      res = plain(await withDeadline(clock.cap(name), job, () => missed));
       res.source = name;
       // inside the try: facts of an unexpected shape fail this source, never the run
       state = stateOf(name, res);
@@ -218,19 +265,24 @@ async function gather(
  * or made with a reported usage below their reservation); a failed call or a missing usage figure keeps its whole
  * reservation, and so does an explain that throws.
  */
-async function safeExplain(b: EvidenceBundle, d: Decision, deps: ShiftDeps): Promise<Explanation> {
+async function safeExplain(b: EvidenceBundle, d: Decision, deps: ShiftDeps, ms: number): Promise<Explanation> {
   let reserved = 0;
+  let late = false;
   const budget = async (n: number) => {
+    if (late) return false; // past the deadline: no new reservation
     const ok = await deps.budget('llm_tokens', n);
     if (ok) reserved += n;
     return ok;
   };
+  const none: Explanation = { aiOk: false, summary: null, notable: [], aiSubstance: null, model: null, tokens: 0, refundable: 0 };
   let ex: Explanation;
   try {
-    ex = await deps.explain(b, d, { budget });
+    // Past the deadline the explanation is dropped and its reservation kept (nothing proves it unused).
+    ex = await withDeadline(ms, (signal) => deps.explain(b, d, { budget, signal }), () => { late = true; return none; });
   } catch {
-    return { aiOk: false, summary: null, notable: [], aiSubstance: null, model: null, tokens: 0, refundable: 0 };
+    return none;
   }
+  if (late) return none;
   const refund = Math.min(reserved, Math.max(0, Math.floor(ex.refundable ?? 0)));
   if (refund > 0) await deps.release?.('llm_tokens', refund)?.catch(() => undefined);
   return ex;
@@ -323,6 +375,7 @@ export async function runProject(
     try { emit?.(s); } catch { /* a closed stream never stops the run */ }
   };
   let liveRunId = opts.liveRunId;
+  const clock = stageClock(deps, kind);
 
   try {
     step('load', 'start');
@@ -337,7 +390,7 @@ export async function runProject(
     const prev = await loadPrev(db, projectId);
     step('load', 'ok', `${project.name} · ${spanLabel(window)}`);
 
-    const g = await gather(project, window, prev, deps, step);
+    const g = await gather(project, window, prev, deps, step, clock);
     const bundle: EvidenceBundle = plain({
       v: 1, rulesVersion: RULES_VERSION, project: project.slug, night, kind, window, sources: g.sources,
     });
@@ -347,7 +400,7 @@ export async function runProject(
     step('rules', 'ok', `${decision.status} · ${decision.reasons.join(', ')}`);
 
     step('explain', 'start');
-    const ex = await safeExplain(bundle, decision, deps);
+    const ex = await safeExplain(bundle, decision, deps, clock.cap('explain'));
     step('explain', ex.aiOk && ex.summary ? 'ok' : 'warn', ex.summary ?? 'explanation unavailable');
 
     step('evidence', 'start');
@@ -397,7 +450,9 @@ export async function runProject(
         sent = h;
       };
       try {
-        const r = await deps.attest(att, attestDepsFor(deps, onBroadcast, { receiptTimeoutMs: LIVE_RECEIPT_TIMEOUT_MS }));
+        // the tx is persisted before the send; only the receipt wait is cut to the live budget left
+        const receiptTimeoutMs = Math.max(MIN_RECEIPT_WAIT_MS, Math.min(LIVE_RECEIPT_TIMEOUT_MS, clock.left()));
+        const r = await deps.attest(att, attestDepsFor(deps, onBroadcast, { receiptTimeoutMs }));
         if ('skipped' in r) {
           const tx = r.txHash ?? sent;
           outcome = { skipped: r.skipped, ...(r.error ? { error: r.error } : {}), ...(tx ? { txHash: tx } : {}) };
