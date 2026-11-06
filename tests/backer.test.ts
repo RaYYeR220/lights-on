@@ -27,12 +27,20 @@ function fakeFetch(opts: { fail?: boolean } = {}) {
   });
 }
 /** multicall stub: contracts alternate balanceOf, decimals. */
-function fakeClient(balances: Record<string, bigint>, decimals = 18) {
+function fakeClient(balances: Record<string, bigint>, decimals = 18, opts: { escrow?: Record<string, [bigint, boolean, boolean]>; rpcDown?: boolean } = {}) {
   return {
-    multicall: vi.fn(async ({ contracts }: { contracts: { address: string; functionName: string }[] }) =>
-      contracts.map((c) => c.functionName === 'balanceOf'
-        ? { status: 'success' as const, result: balances[c.address.toLowerCase()] ?? 0n }
-        : { status: 'success' as const, result: decimals })),
+    multicall: vi.fn(async ({ contracts }: { contracts: { address: string; functionName: string }[] }) => {
+      if (opts.rpcDown && contracts[0].functionName === 'contributions') throw new Error('rpc down https://key');
+      return contracts.map((c) => {
+        if (c.functionName === 'contributions') {
+          const v = opts.escrow?.[c.address.toLowerCase()];
+          return v ? { status: 'success' as const, result: v } : { status: 'failure' as const, error: new Error('no data') };
+        }
+        return c.functionName === 'balanceOf'
+          ? { status: 'success' as const, result: balances[c.address.toLowerCase()] ?? 0n }
+          : { status: 'success' as const, result: decimals };
+      });
+    }),
   };
 }
 
@@ -65,6 +73,36 @@ describe('loadVibestarterIndex', () => {
   });
 });
 
+const ESCROW = '0x' + '11'.repeat(20);
+describe('discoverBacker on-chain source', () => {
+  it('on-chain amount wins over the REST amount; refundClaimed passed through', async () => {
+    const { db } = await setup();
+    const client = fakeClient({}, 18, { escrow: { [ESCROW]: [30_000_000_000_000_000n, true, false] } });
+    const r = await discoverBacker(TOP, { db, fetch: fakeFetch(), client });
+    expect(r.degraded).toBe(false);
+    expect(r.projects).toEqual([expect.objectContaining({ slug: 'corvo-edge', via: 'vibestarter', amountWei: '30000000000000000', refundClaimed: true })]);
+  });
+  it('on-chain finds a backer the REST list does not have; REST failure does not degrade', async () => {
+    const { db } = await setup();
+    const client = fakeClient({}, 18, { escrow: { [ESCROW]: [5n, false, false] } });
+    const r = await discoverBacker('0x' + '77'.repeat(20), { db, fetch: fakeFetch({ fail: true }), client });
+    expect(r.degraded).toBe(false);
+    expect(r.projects).toEqual([expect.objectContaining({ slug: 'corvo-edge', amountWei: '5', refundClaimed: false })]);
+  });
+  it('on-chain zero is authoritative (REST amount ignored)', async () => {
+    const { db } = await setup();
+    const client = fakeClient({}, 18, { escrow: { [ESCROW]: [0n, false, false] } });
+    const r = await discoverBacker(TOP, { db, fetch: fakeFetch(), client });
+    expect(r.projects).toEqual([]);
+  });
+  it('RPC failure falls back to REST and sets degraded', async () => {
+    const { db } = await setup();
+    const r = await discoverBacker(TOP, { db, fetch: fakeFetch(), client: fakeClient({}, 18, { rpcDown: true }) });
+    expect(r.degraded).toBe(true);
+    expect(r.projects).toEqual([expect.objectContaining({ slug: 'corvo-edge', amountWei: '20000000000000000' })]);
+  });
+});
+
 describe('discoverBacker', () => {
   it('contributor -> via vibestarter with summed amount (mapped through launch tx hash)', async () => {
     const { db } = await setup();
@@ -86,10 +124,10 @@ describe('discoverBacker', () => {
     const held = await discoverBacker(other, { db, fetch: fakeFetch(), client: fakeClient({ [TOKEN]: 1_500_000_000_000_000_000n }) });
     expect(held.projects).toEqual([expect.objectContaining({ slug: 'corvo-edge', via: 'token', balance: '1.5', symbol: 'CORVO' })]);
   });
-  it('vibestarter failure -> tokens only + degraded', async () => {
+  it('REST failure with no on-chain data -> tokens only', async () => {
     const { db } = await setup();
     const r = await discoverBacker(TOP, { db, fetch: fakeFetch({ fail: true }), client: fakeClient({ [TOKEN]: 5n * 10n ** 18n }) });
-    expect(r.degraded).toBe(true);
+    expect(r.degraded).toBe(false);
     expect(r.projects).toEqual([expect.objectContaining({ slug: 'corvo-edge', via: 'token', balance: '5' })]);
   });
   it('resolveBackerProjectIds unions ids and skips invalid addresses', async () => {
@@ -126,9 +164,9 @@ describe('GET /api/v1/briefing/[address]', () => {
     expect(j.briefing.aiOk).toBe(false);
     expect(j.briefing.text).toContain('Corvo Edge');
   });
-  it('degraded flag when vibestarter fails', async () => {
+  it('degraded flag when the RPC fails and REST has nothing', async () => {
     const { db } = await setup();
-    setBackerDepsForTests({ db, fetch: fakeFetch({ fail: true }), client: fakeClient({}) });
+    setBackerDepsForTests({ db, fetch: fakeFetch({ fail: true }), client: fakeClient({}, 18, { rpcDown: true }) });
     const j = await (await call(TOP)).json();
     expect(j.degraded).toBe(true);
     expect(j.projects).toEqual([]);

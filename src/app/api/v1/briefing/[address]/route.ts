@@ -53,6 +53,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ address: strin
       address: r.address,
       projects: found.projects.map(({ id: _id, ...p }) => p),
       briefing: { text: briefing.text, aiOk: false },
+      ...(found.displayName ? { displayName: found.displayName } : {}),
       degraded: found.degraded,
     }, 200, CACHE);
   } catch (e) {

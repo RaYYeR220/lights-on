@@ -3,6 +3,7 @@ import type { Db } from '@/lib/db';
 import { listProjects } from '@/lib/db/queries';
 import { getBaseClient } from '@/lib/adapters/baseRpc';
 import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
+import { vibestarterContributionsAbi } from '@/lib/adapters/vibestarterAbi';
 import { safeErrorCode } from '@/lib/net/redact';
 
 const API = 'https://app.vibestarter.xyz';
@@ -15,7 +16,8 @@ export type BackerFetch = (url: string) => Promise<SafeFetchResult>;
 /** The slice of a viem PublicClient used for the token multicall; tests inject a fake. */
 export interface MulticallLike {
   multicall(args: {
-    contracts: { address: Address; abi: typeof erc20Abi; functionName: 'balanceOf' | 'decimals'; args?: [Address] }[];
+    contracts: ({ address: Address; abi: typeof erc20Abi; functionName: 'balanceOf' | 'decimals'; args?: [Address] }
+      | { address: Address; abi: typeof vibestarterContributionsAbi; functionName: 'contributions'; args: [Address] })[];
     allowFailure: true;
   }): Promise<({ status: 'success'; result: unknown } | { status: 'failure'; error: unknown })[]>;
 }
@@ -33,15 +35,18 @@ export interface BackerProject {
   name: string;
   via: 'vibestarter' | 'token' | 'follow';
   amountWei?: string;
+  refundClaimed?: boolean;
   balance?: string;
   symbol?: string;
 }
-export interface BackerResult { projects: BackerProject[]; degraded: boolean }
+export interface BackerResult { projects: BackerProject[]; degraded: boolean; displayName?: string }
 
 export interface Backing { campaignId: string; campaignTitle: string; amountWei: string }
 export interface VibestarterIndex {
   /** lowercase wallet -> backings, summed per campaign. `campaignId` is the campaign's launch tx hash (what /api/backings/recent calls its id). */
   byWallet: Map<string, Backing[]>;
+  /** lowercase wallet -> display name (enrichment only). */
+  names: Map<string, string>;
   /** token.launchTxHash (lowercase) -> campaign cuid (what projects.vibestarter.campaignId stores), from /api/campaigns. */
   launchToCuid: Map<string, string>;
 }
@@ -86,6 +91,7 @@ export async function loadVibestarterIndex(deps: { fetch?: BackerFetch; now?: ()
   if (cache && now - cache.at < CACHE_MS) return cache.idx;
   const doFetch = deps.fetch ?? ((u) => safeFetch(u));
   const seen = new Set<string>();
+  const names = new Map<string, string>();
   const sums = new Map<string, Map<string, Backing>>();
   let offset = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -100,6 +106,8 @@ export async function loadVibestarterIndex(deps: { fetch?: BackerFetch; now?: ()
       const cid = camp ? str(camp.id)?.toLowerCase() : null;
       if (!id || seen.has(id) || !amount || !/^\d+$/.test(amount) || !wallet || !cid || !camp) continue;
       seen.add(id);
+      const dn = isRec(b.backer) ? str(b.backer.displayName) : null;
+      if (dn) names.set(wallet, dn);
       fresh++;
       const perWallet = sums.get(wallet) ?? new Map<string, Backing>();
       const cur = perWallet.get(cid);
@@ -115,7 +123,7 @@ export async function loadVibestarterIndex(deps: { fetch?: BackerFetch; now?: ()
     offset += items.length;
   }
   const byWallet = new Map([...sums].map(([w, m]) => [w, [...m.values()]] as [string, Backing[]]));
-  const idx: VibestarterIndex = { byWallet, launchToCuid: await loadLaunchMap(doFetch) };
+  const idx: VibestarterIndex = { byWallet, names, launchToCuid: await loadLaunchMap(doFetch) };
   cache = { at: now, idx };
   return idx;
 }
@@ -133,27 +141,54 @@ export async function discoverBacker(address: string, deps: BackerDeps): Promise
   const out = new Map<number, BackerProject>();
   let degraded = false;
 
+  const client = deps.client ?? (getBaseClient() as unknown as MulticallLike);
+  // 1. On-chain escrow contributions: authoritative (the REST API lags and is truncated).
+  const escrowed = projs.filter((p) => p.vibestarter?.escrow && isAddress(p.vibestarter.escrow, { strict: false }));
+  const onchain = new Set<number>();
+  if (escrowed.length) {
+    try {
+      const res = await client.multicall({
+        allowFailure: true,
+        contracts: escrowed.map((p) => ({
+          address: p.vibestarter!.escrow as Address, abi: vibestarterContributionsAbi, functionName: 'contributions' as const, args: [addr] as [Address],
+        })),
+      });
+      escrowed.forEach((p, i) => {
+        const r = res[i];
+        if (r.status !== 'success' || !Array.isArray(r.result) || typeof r.result[0] !== 'bigint') return; // unknown -> REST fallback
+        onchain.add(p.id);
+        if (r.result[0] > 0n) {
+          out.set(p.id, { id: p.id, slug: p.slug, name: p.name, via: 'vibestarter', amountWei: r.result[0].toString(), refundClaimed: r.result[1] === true });
+        }
+      });
+    } catch (e) {
+      degraded = true;
+      console.error('backer.escrow failed:', safeErrorCode(e));
+    }
+  }
+
+  // 2. REST index: display-name enrichment, and the fallback for projects the chain read did not cover. Never degrades.
+  let displayName: string | undefined;
   try {
     const idx = await loadVibestarterIndex(deps);
+    displayName = idx.names.get(wallet);
     for (const b of idx.byWallet.get(wallet) ?? []) {
       const cuid = idx.launchToCuid.get(b.campaignId);
       const title = b.campaignTitle.trim().toLowerCase();
       const p = projs.find((x) => cuid && x.vibestarter?.campaignId === cuid)
         ?? (title ? projs.find((x) => x.name.trim().toLowerCase() === title) : undefined);
-      if (!p) continue;
+      if (!p || onchain.has(p.id)) continue;
       const prev = out.get(p.id);
       const amount = (BigInt(prev?.amountWei ?? '0') + BigInt(b.amountWei)).toString();
       out.set(p.id, { id: p.id, slug: p.slug, name: p.name, via: 'vibestarter', amountWei: amount });
     }
   } catch (e) {
-    degraded = true;
-    console.error('backer.vibestarter failed:', safeErrorCode(e));
+    console.error('backer.rest failed:', safeErrorCode(e));
   }
 
   const held = projs.filter((p) => p.token && p.token.chainId === BASE_CHAIN_ID && isAddress(p.token.address, { strict: false }));
   if (held.length) {
     try {
-      const client = deps.client ?? (getBaseClient() as unknown as MulticallLike);
       const res = await client.multicall({
         allowFailure: true,
         contracts: held.flatMap((p) => [
@@ -177,7 +212,7 @@ export async function discoverBacker(address: string, deps: BackerDeps): Promise
       console.error('backer.token failed:', safeErrorCode(e));
     }
   }
-  return { projects: [...out.values()].sort((a, b) => a.id - b.id), degraded };
+  return { projects: [...out.values()].sort((a, b) => a.id - b.id), degraded, ...(displayName ? { displayName } : {}) };
 }
 
 /** Plug for `onShiftFinalized({ resolveAddresses })`: project ids for a set of wallets; bad addresses and failures are skipped. */

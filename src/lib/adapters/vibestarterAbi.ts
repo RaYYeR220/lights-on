@@ -107,3 +107,18 @@ export const founderUpdateEvent = vibestarterEscrowAbi[0];
 export const trancheRequestedEvent = vibestarterEscrowAbi[1];
 export const contributionMadeEvent = vibestarterEscrowAbi[2];
 export const challengeRaisedEvent = vibestarterEscrowAbi[3];
+
+/** View used for backer discovery: per-wallet contribution on an escrow (authoritative; the REST API lags). */
+export const vibestarterContributionsAbi = [
+  {
+    inputs: [{ internalType: 'address', name: '', type: 'address' }],
+    name: 'contributions',
+    outputs: [
+      { internalType: 'uint256', name: 'amount', type: 'uint256' },
+      { internalType: 'bool', name: 'refundClaimed', type: 'bool' },
+      { internalType: 'bool', name: 'excessClaimed', type: 'bool' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
