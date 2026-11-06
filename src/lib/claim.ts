@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull, lt, or } from 'drizzle-orm';
 import { createSiweMessage, parseSiweMessage, validateSiweMessage } from 'viem/siwe';
-import { isAddressEqual, verifyMessage, type Address, type Hex } from 'viem';
+import { getAddress, isAddressEqual, verifyMessage, type Address, type Hex } from 'viem';
 import { getDb, type Db } from '@/lib/db';
 import { claimNonces, founderNotes, nights, projects, type ProjectRow } from '@/lib/db/schema';
 import { getProjectBySlug } from '@/lib/db/queries';
@@ -68,15 +68,29 @@ export function buildSiweMessage(
 }
 
 /** Issue a single-use nonce (10 min). Throws Error('unknown_project') for an unknown slug. */
-export async function issueClaimNonce(slug: string, deps?: Partial<ClaimDeps>, purpose: Purpose = 'claim'): Promise<string> {
+export async function issueClaimNonce(slug: string, deps: Partial<ClaimDeps> | undefined, purpose: Purpose, address: string): Promise<string> {
   const d = await resolveClaimDeps(deps);
+  let addr: string;
+  try {
+    addr = getAddress(address).toLowerCase();
+  } catch {
+    throw new Error('bad_address');
+  }
   const p = await getProjectBySlug(d.db, slug);
   if (!p || p.hidden) throw new Error('unknown_project');
+  const now = nowOf(d);
+  // Cheap housekeeping: drop nonces that expired or were spent long ago.
+  await d.db.delete(claimNonces).where(or(lt(claimNonces.expiresAt, new Date(now.getTime() - 3_600_000)), lt(claimNonces.usedAt, new Date(now.getTime() - 3_600_000))));
   const nonce = randomBytes(16).toString('hex');
   await d.db.insert(claimNonces).values({
-    nonceHash: sha(nonce), projectId: p.id, purpose, expiresAt: new Date(nowOf(d).getTime() + NONCE_TTL_MS),
+    nonceHash: sha(nonce), projectId: p.id, purpose, address: addr, expiresAt: new Date(now.getTime() + NONCE_TTL_MS),
   });
   return nonce;
+}
+
+/** The exact line the founder publishes at /.well-known/lights-on.txt (bound to the wallet that will sign). */
+export function proofLine(address: string, nonce: string): string {
+  return `lights-on-claim=${address.toLowerCase()}:${nonce}`;
 }
 
 async function defaultVerifySig(a: { address: Address; message: string; signature: Hex }): Promise<boolean> {
@@ -105,6 +119,9 @@ async function checkSiwe(
   const project = await getProjectBySlug(d.db, a.slug);
   if (!project || project.hidden) return { ok: false, reason: 'unknown_project' };
   const m = parseSiweMessage(a.message);
+  if (m.address) {
+    try { m.address = getAddress(m.address); } catch { return { ok: false, reason: 'bad_message' }; }
+  }
   if (!m.address || !m.nonce || !m.domain || !m.uri || !m.chainId || !m.expirationTime || !m.issuedAt) {
     return { ok: false, reason: 'bad_message' };
   }
@@ -121,7 +138,7 @@ async function checkSiwe(
   }
   const [row] = await d.db.select().from(claimNonces).where(and(
     eq(claimNonces.nonceHash, sha(m.nonce)), eq(claimNonces.projectId, project.id), eq(claimNonces.purpose, a.purpose),
-    isNull(claimNonces.usedAt), gt(claimNonces.expiresAt, now),
+    eq(claimNonces.address, m.address.toLowerCase()), isNull(claimNonces.usedAt), gt(claimNonces.expiresAt, now),
   )).limit(1);
   if (!row) return { ok: false, reason: 'bad_nonce' };
   const sigOk = await (d.verifySig ?? defaultVerifySig)({ address: m.address, message: a.message, signature: a.signature as Hex });
@@ -143,7 +160,7 @@ const isFounder = (p: ProjectRow, who: string) => {
   return !!w && /^0x[0-9a-fA-F]{40}$/.test(w) && isAddressEqual(w as Address, who as Address);
 };
 
-async function wellKnownHasNonce(p: ProjectRow, nonce: string, d: ClaimDeps): Promise<boolean> {
+async function wellKnownHasNonce(p: ProjectRow, signer: string, nonce: string, d: ClaimDeps): Promise<boolean> {
   if (!p.liveUrl) return false;
   let url: string;
   try {
@@ -154,7 +171,7 @@ async function wellKnownHasNonce(p: ProjectRow, nonce: string, d: ClaimDeps): Pr
   try {
     const r = await (d.safeFetch ?? realSafeFetch)(url, { maxBytes: WELL_KNOWN_MAX_BYTES, timeoutMs: 8000, headers: { accept: 'text/plain' } });
     if (r.status !== 200 || r.truncated) return false;
-    return r.body.split(/\r?\n/).some((l) => l.trim() === `lights-on-claim=${nonce}`);
+    return r.body.split(/\r?\n/).some((l) => l.trim() === proofLine(signer, nonce));
   } catch {
     return false;
   }
@@ -175,13 +192,18 @@ export async function verifyClaim(
       method = 'vibestarter_founder';
     } else if (project.claimedBy && !sameClaimer) {
       return { ok: false, reason: 'claimed_by_other' }; // only method 1 may take over an existing claim
-    } else if (await wellKnownHasNonce(project, nonce, d)) {
+    } else if (await wellKnownHasNonce(project, signer, nonce, d)) {
       method = 'well_known';
     } else {
       return { ok: false, reason: 'proof_missing' };
     }
     if (!(await consumeNonce(d, nonce, 'claim'))) return { ok: false, reason: 'bad_nonce' };
-    await d.db.update(projects).set({ claimedBy: signer.toLowerCase(), claimVerifiedAt: nowOf(d) }).where(eq(projects.id, project.id));
+    const who = signer.toLowerCase();
+    const where = method === 'vibestarter_founder'
+      ? eq(projects.id, project.id)
+      : and(eq(projects.id, project.id), or(isNull(projects.claimedBy), eq(projects.claimedBy, who)));
+    const won = await d.db.update(projects).set({ claimedBy: who, claimVerifiedAt: nowOf(d) }).where(where).returning({ id: projects.id });
+    if (won.length === 0) return { ok: false, reason: 'claimed_by_other' };
     return { ok: true, method };
   } catch {
     return { ok: false, reason: 'internal' };
@@ -210,9 +232,13 @@ export async function verifyClaimerSession(
 export function cleanNote(raw: string): { ok: true; text: string } | Fail {
   const s = String(raw ?? '');
   if (s.length > NOTE_MAX) return { ok: false, reason: 'too_long' };
-  if (BANNED.test(s)) return { ok: false, reason: 'banned_word' };
+  // Banned words are checked on the raw text, on the text with markup removed outright (so "sc<b>am" and
+  // "ru[x](y)g" cannot slip through) and on the sanitized result.
+  const squashed = s.replace(/<[^>]*>/g, '').replace(/!?\[[^\]]*\]\([^)]*\)/g, '').replace(/[*_#`]/g, '');
+  if (BANNED.test(s) || BANNED.test(squashed)) return { ok: false, reason: 'banned_word' };
   const t = sanitizeSummary(s);
   if (!t) return { ok: false, reason: 'empty_note' };
+  if (BANNED.test(t)) return { ok: false, reason: 'banned_word' };
   return { ok: true, text: t };
 }
 

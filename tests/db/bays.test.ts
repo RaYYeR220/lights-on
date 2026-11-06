@@ -22,9 +22,10 @@ describe('stable bays', () => {
     const pg = new PGlite();
     const dir = path.resolve(__dirname, '../../drizzle');
     // apply everything except 0009 by hand-running the files in order, seed, then run 0009
-    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
-    const last = files.pop()!;
-    expect(last).toBe('0009_project_bays.sql');
+    const all = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    const last = '0009_project_bays.sql';
+    const files = all.filter((f) => f < last); // later migrations are independent of the backfill
+    expect(all).toContain(last);
     for (const f of files) {
       for (const stmt of fs.readFileSync(path.join(dir, f), 'utf8').split('--> statement-breakpoint')) {
         if (stmt.trim()) await pg.exec(stmt);

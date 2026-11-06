@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { json } from '@/lib/net/http';
 import { safeErrorCode } from '@/lib/net/redact';
 import { claimLimiter, resolveClaimDeps, verifyClaimerSession } from '@/lib/claim';
@@ -8,14 +9,18 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /** Text only; posting the update on-chain (needs an IPFS pin) is out of scope. Needs a fresh SIWE session of the claimer. */
-export async function GET(req: Request): Promise<Response> {
+const Body = z.object({ slug: z.string().min(1).max(100), message: z.string().max(2000), signature: z.string().max(2002) });
+
+export async function POST(req: Request): Promise<Response> {
   try {
     if (!claimLimiter.take(limiterKey(req.headers))) return tooMany();
-    const q = new URL(req.url).searchParams;
-    const slug = q.get('slug') ?? '';
-    const message = q.get('message') ?? '';
-    const signature = q.get('signature') ?? '';
-    if (!slug || !message || !signature) return json({ error: 'bad_request' }, 400);
+    let body: z.infer<typeof Body>;
+    try {
+      body = Body.parse(await req.json());
+    } catch {
+      return json({ error: 'bad_request' }, 400);
+    }
+    const { slug, message, signature } = body;
     const deps = await resolveClaimDeps();
     const s = await verifyClaimerSession({ slug, message, signature, purpose: 'draft' }, deps);
     if (!s.ok) return failure(s.reason);

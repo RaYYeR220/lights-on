@@ -3,7 +3,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { createSiweMessage } from 'viem/siwe';
 import { eq } from 'drizzle-orm';
 import type { Db } from '@/lib/db';
-import { founderNotes, projects } from '@/lib/db/schema';
+import { claimNonces, founderNotes, projects } from '@/lib/db/schema';
 import { insertNight } from '@/lib/db/queries';
 import {
   addFounderNote, buildSiweMessage, issueClaimNonce, nonceLimiter, claimLimiter, setClaimDepsForTests, verifyClaim,
@@ -15,7 +15,7 @@ import { makeTestDb } from './helpers/db';
 import { seedProject } from './helpers/shift';
 import { POST as noncePOST } from '@/app/api/claim/nonce/route';
 import { POST as claimPOST } from '@/app/api/claim/route';
-import { GET as draftGET } from '@/app/api/claim/draft/route';
+import { POST as draftPOST } from '@/app/api/claim/draft/route';
 import { POST as notesPOST } from '@/app/api/notes/route';
 import { GET as badgeGET } from '@/app/badge/[slug]/route';
 
@@ -37,7 +37,7 @@ async function project(over: Record<string, unknown> = {}) {
   return seedProject(db, 'corvo', { name: 'Corvo Edge', liveUrl: 'https://corvo.example', ...over } as never);
 }
 async function sign(acct: typeof founder, slug: string, purpose: 'claim' | 'note' | 'draft', night?: number, nonceIn?: string) {
-  const nonce = nonceIn ?? (await issueClaimNonce(slug, deps(), purpose));
+  const nonce = nonceIn ?? (await issueClaimNonce(slug, deps(), purpose, acct.address));
   const message = buildSiweMessage({ address: acct.address, nonce, project: { slug, name: 'Corvo Edge' }, purpose, night }, deps());
   return { nonce, message, signature: await acct.signMessage({ message }) };
 }
@@ -65,14 +65,14 @@ describe('verifyClaim', () => {
   it('method 2: well-known file carries the nonce', async () => {
     await project();
     const s = await sign(other, 'corvo', 'claim');
-    wellKnown = async (u) => { expect(u).toBe('https://corvo.example/.well-known/lights-on.txt'); return ok(`hello\nlights-on-claim=${s.nonce}\n`); };
+    wellKnown = async (u) => { expect(u).toBe('https://corvo.example/.well-known/lights-on.txt'); return ok(`hello\nlights-on-claim=${other.address.toLowerCase()}:${s.nonce}\n`); };
     expect(await verifyClaim({ slug: 'corvo', message: s.message, signature: s.signature }, deps())).toEqual({ ok: true, method: 'well_known' });
   });
 
   it('well-known nonce mismatch is rejected and nothing is claimed', async () => {
     await project();
     const s = await sign(other, 'corvo', 'claim');
-    wellKnown = async () => ok('lights-on-claim=deadbeefdeadbeefdeadbeef\n');
+    wellKnown = async () => ok(`lights-on-claim=${other.address.toLowerCase()}:deadbeefdeadbeefdeadbeef\n`);
     expect(await verifyClaim({ slug: 'corvo', message: s.message, signature: s.signature }, deps())).toEqual({ ok: false, reason: 'proof_missing' });
     const [p] = await db.select().from(projects).where(eq(projects.slug, 'corvo'));
     expect(p.claimedBy).toBeNull();
@@ -80,7 +80,7 @@ describe('verifyClaim', () => {
 
   it('SIWE with the wrong chain id is rejected', async () => {
     await project({ vibestarter: { campaignId: 'c', escrow: '0x0', founderWallet: founder.address } });
-    const nonce = await issueClaimNonce('corvo', deps());
+    const nonce = await issueClaimNonce('corvo', deps(), 'claim', founder.address);
     const message = createSiweMessage({
       address: founder.address, chainId: 1, domain: 'lights-on.test', nonce, uri: SITE, version: '1',
       statement: 'Claim Corvo Edge on Lights On', issuedAt: NOW, expirationTime: new Date(NOW.getTime() + 600_000),
@@ -92,7 +92,7 @@ describe('verifyClaim', () => {
   it('rejects a wrong domain, a wrong statement and a bad signature', async () => {
     await project({ vibestarter: { campaignId: 'c', escrow: '0x0', founderWallet: founder.address } });
     const mk = async (o: { domain?: string; statement?: string }) => {
-      const nonce = await issueClaimNonce('corvo', deps());
+      const nonce = await issueClaimNonce('corvo', deps(), 'claim', founder.address);
       const message = createSiweMessage({
         address: founder.address, chainId: 8453, domain: o.domain ?? 'lights-on.test', nonce, uri: SITE, version: '1',
         statement: o.statement ?? 'Claim Corvo Edge on Lights On', issuedAt: NOW, expirationTime: new Date(NOW.getTime() + 600_000),
@@ -120,7 +120,7 @@ describe('verifyClaim', () => {
 
   it('a claim nonce cannot be spent on a note (purpose bound)', async () => {
     await project();
-    const n = await issueClaimNonce('corvo', deps(), 'claim');
+    const n = await issueClaimNonce('corvo', deps(), 'claim', founder.address);
     const s = await sign(founder, 'corvo', 'note', 20261105, n);
     expect(await addFounderNote({ slug: 'corvo', night: 20261105, note: 'x', ...s }, deps())).toEqual({ ok: false, reason: 'bad_nonce' });
   });
@@ -130,12 +130,63 @@ describe('verifyClaim', () => {
     await db.update(projects).set({ claimedBy: other.address.toLowerCase(), claimVerifiedAt: NOW }).where(eq(projects.slug, 'corvo'));
     const third = privateKeyToAccount(`0x${'33'.repeat(32)}`);
     const t = await sign(third, 'corvo', 'claim');
-    wellKnown = async () => ok(`lights-on-claim=${t.nonce}`);
+    wellKnown = async () => ok(`lights-on-claim=${third.address.toLowerCase()}:${t.nonce}`);
     expect(await verifyClaim({ slug: 'corvo', message: t.message, signature: t.signature }, deps())).toEqual({ ok: false, reason: 'claimed_by_other' });
     const f = await sign(founder, 'corvo', 'claim');
     expect(await verifyClaim({ slug: 'corvo', message: f.message, signature: f.signature }, deps())).toEqual({ ok: true, method: 'vibestarter_founder' });
     const [p] = await db.select().from(projects).where(eq(projects.slug, 'corvo'));
     expect(p.claimedBy).toBe(founder.address.toLowerCase());
+  });
+});
+
+describe('address-bound nonces and conditional ownership', () => {
+  const third = privateKeyToAccount(`0x${'33'.repeat(32)}`);
+  const line = (a: { address: string }, n: string) => `lights-on-claim=${a.address.toLowerCase()}:${n}`;
+
+  it('an attacker signing a nonce issued to another address gets bad_nonce', async () => {
+    await project();
+    const nonce = await issueClaimNonce('corvo', deps(), 'claim', founder.address);
+    const s = await sign(other, 'corvo', 'claim', undefined, nonce);
+    wellKnown = async () => ok(line(other, nonce));
+    expect(await verifyClaim({ slug: 'corvo', message: s.message, signature: s.signature }, deps())).toEqual({ ok: false, reason: 'bad_nonce' });
+  });
+
+  it('a proof line naming another address (or none) is rejected', async () => {
+    await project();
+    const s = await sign(other, 'corvo', 'claim');
+    wellKnown = async () => ok(line(founder, s.nonce));
+    expect(await verifyClaim({ slug: 'corvo', message: s.message, signature: s.signature }, deps())).toEqual({ ok: false, reason: 'proof_missing' });
+    wellKnown = async () => ok(`lights-on-claim=${s.nonce}`);
+    expect(await verifyClaim({ slug: 'corvo', message: s.message, signature: s.signature }, deps())).toEqual({ ok: false, reason: 'proof_missing' });
+  });
+
+  it('a concurrent second claimer gets claimed_by_other', async () => {
+    await project();
+    const a = await sign(other, 'corvo', 'claim');
+    const b = await sign(third, 'corvo', 'claim');
+    wellKnown = async () => ok(`${line(other, a.nonce)}\n${line(third, b.nonce)}\n`);
+    const [ra, rb] = await Promise.all([
+      verifyClaim({ slug: 'corvo', message: a.message, signature: a.signature }, deps()),
+      verifyClaim({ slug: 'corvo', message: b.message, signature: b.signature }, deps()),
+    ]);
+    expect([ra.ok, rb.ok].filter(Boolean)).toHaveLength(1);
+    expect([ra, rb].find((r) => !r.ok)).toMatchObject({ ok: false });
+  });
+
+  it('a malformed address is bad_message, not a 500', async () => {
+    await project();
+    const nonce = await issueClaimNonce('corvo', deps(), 'claim', founder.address);
+    const message = buildSiweMessage({ address: founder.address, nonce, project: { slug: 'corvo', name: 'Corvo Edge' }, purpose: 'claim' }, deps())
+      .replace(founder.address, '0xnotanaddress');
+    expect(await verifyClaim({ slug: 'corvo', message, signature: '0x1234' }, deps())).toMatchObject({ ok: false });
+  });
+
+  it('expired nonce rows are purged on the next issue', async () => {
+    await project();
+    await issueClaimNonce('corvo', deps(), 'claim', founder.address);
+    clock = new Date(NOW.getTime() + 3 * 3_600_000);
+    await issueClaimNonce('corvo', deps(), 'claim', founder.address);
+    expect(await db.select().from(claimNonces)).toHaveLength(1);
   });
 });
 
@@ -158,6 +209,14 @@ describe('founder notes', () => {
     expect(row.signature).toBe(s.signature);
     expect(row.author).toBe(founder.address.toLowerCase());
     expect(row.night).toBe('2026-11-05');
+  });
+
+  it('banned words cannot hide behind markup', async () => {
+    await claimed();
+    for (const note of ['this is a sc<b>am</b>', 'ru[x](y)g pull', 'fr*a*ud']) {
+      const s = await sign(founder, 'corvo', 'note', 20261105);
+      expect(await addFounderNote({ slug: 'corvo', night: 20261105, note, ...s }, deps())).toEqual({ ok: false, reason: 'banned_word' });
+    }
   });
 
   it('rejects over-long notes and banned words', async () => {
@@ -213,9 +272,9 @@ describe('routes', () => {
   it('nonce route is rate limited to 10 per 10 minutes per IP and 404s unknown slugs', async () => {
     process.env.INTERNAL_RUN_TOKEN = 'test-secret';
     await project();
-    for (let i = 0; i < 10; i++) expect((await noncePOST(post('/api/claim/nonce', { slug: 'corvo' }))).status).toBe(200);
-    expect((await noncePOST(post('/api/claim/nonce', { slug: 'corvo' }))).status).toBe(429);
-    expect((await noncePOST(post('/api/claim/nonce', { slug: 'nope' }, '9.9.9.9'))).status).toBe(404);
+    for (let i = 0; i < 10; i++) expect((await noncePOST(post('/api/claim/nonce', { slug: 'corvo', address: founder.address }))).status).toBe(200);
+    expect((await noncePOST(post('/api/claim/nonce', { slug: 'corvo', address: founder.address }))).status).toBe(429);
+    expect((await noncePOST(post('/api/claim/nonce', { slug: 'nope', address: founder.address }, '9.9.9.9'))).status).toBe(404);
   });
 
   it('draft route requires the claimer session', async () => {
@@ -223,14 +282,13 @@ describe('routes', () => {
     const p = await project({ vibestarter: { campaignId: 'c', escrow: '0x0', founderWallet: founder.address } });
     await insertNight(db, { projectId: p.id, night: '2026-11-05', status: 'shipped', observed: true, summary: 'Added the withdraw flow.' });
     await db.update(projects).set({ claimedBy: founder.address.toLowerCase(), claimVerifiedAt: NOW }).where(eq(projects.id, p.id));
-    const q = (s: { message: string; signature: string }) =>
-      new Request(`${SITE}/api/claim/draft?slug=corvo&message=${encodeURIComponent(s.message)}&signature=${s.signature}`, { headers: { 'x-real-ip': '5.5.5.5' } });
-    const okRes = await draftGET(q(await sign(founder, 'corvo', 'draft')));
+    const q = (s: { message: string; signature: string }) => post('/api/claim/draft', { slug: 'corvo', message: s.message, signature: s.signature }, '5.5.5.5');
+    const okRes = await draftPOST(q(await sign(founder, 'corvo', 'draft')));
     expect(okRes.status).toBe(200);
     const body = await okRes.json();
     expect(body.text).toContain('[2026-11-05]');
     expect(body.aiOk).toBe(false);
-    const denied = await draftGET(q(await sign(other, 'corvo', 'draft')));
+    const denied = await draftPOST(q(await sign(other, 'corvo', 'draft')));
     expect(denied.status).toBe(403);
   });
 

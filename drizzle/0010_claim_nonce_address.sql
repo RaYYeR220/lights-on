@@ -1,0 +1,1 @@
+ALTER TABLE "claim_nonces" ADD COLUMN "address" text DEFAULT '' NOT NULL;

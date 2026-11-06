@@ -169,6 +169,8 @@ export const claimNonces = pgTable('claim_nonces', {
   nonceHash: text('nonce_hash').primaryKey(),
   projectId: integer('project_id').notNull().references(() => projects.id),
   purpose: text('purpose').notNull(),
+  /** Lowercase wallet the nonce was issued to; only that wallet may sign with it. */
+  address: text('address').notNull().default(''),
   expiresAt: tsz('expires_at').notNull(),
   usedAt: tsz('used_at'),
   createdAt: tsz('created_at').notNull().defaultNow(),
