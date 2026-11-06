@@ -8,7 +8,7 @@ Everything below runs in a browser with no wallet, account or funds. Site: **htt
 
 2. **Open last night's shift.** https://lights-on-watch.vercel.app/night
    Counts by status, every project's reading and note, the night's single attestation transaction and its manifest.
-   *Shows:* one transaction per night covers every observed project: a Merkle root of every verdict, with each night's proof published. The first observed night is `{{TBD:first-observed-night}}`; earlier nights are reconstructed and labelled as such.
+   *Shows:* one transaction per night covers every observed project: a Merkle root of every verdict, with each night's proof published. The first observed night is `2026-11-06`; earlier nights are reconstructed and labelled as such.
 
 3. **Open a project with real history.** https://lights-on-watch.vercel.app/p/revoke-cash
    Status, streak, lit nights in the last 30, and a 90-night strip. Hatched nights were reconstructed from git history and Wayback captures; solid nights were observed by the watcher.
@@ -46,20 +46,20 @@ Everything below runs in a browser with no wallet, account or funds. Site: **htt
     - Nightly root schema: https://base.easscan.org/schema/view/0xfe6c6dba61a36a6fbdf682e0d8bf3903a289ebb186e172c59aa9c578b673e726
     - Live-run schema: https://base.easscan.org/schema/view/0x18fe45e82c5c9b1a176794774f023536a12794a76ee877ebfb0d713166e65d8b
     - Watcher address: https://basescan.org/address/0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6
-    - First nightly root attestation: https://basescan.org/tx/{{TBD:first-nightly-root-tx}}
-    - That night's root, shared by every project-night in it: https://base.easscan.org/attestation/view/{{TBD:sample-nightly-attestation-uid}}
-    - One live-run attestation: https://base.easscan.org/attestation/view/{{TBD:live-run-attestation-uid}}
-    - Watcher identity: ERC-8004 agent `{{TBD:agent-id}}`, registered in https://basescan.org/tx/{{TBD:agent-registration-tx}}
+    - First nightly root attestation: https://basescan.org/tx/0x34f4b344304710c9fd75367a6a42d8e58875561b339da1737a1ec29dcdf1e167
+    - That night's root, shared by every project-night in it: https://base.easscan.org/attestation/view/0x8ea045042ae9243e0f7f8a674156878861a113fd6378ce927834575a847ab3df
+    - One live-run attestation: https://base.easscan.org/attestation/view/0x4f3f0709742dce694a70d8107b6a4494fe2ccc81a5f63629ef49a978b2116ecb
+    - Watcher identity: ERC-8004 agent `1167163`, registered in https://basescan.org/tx/0x694f47389cb7ae9c084310cb5e7a802c8e5421a5b0d4f39352fd48747e04534d
 
     *Shows:* every attestation comes from one address that holds a registered agent identity. Details and command-line checks: [PROOF.md](PROOF.md).
 
 ## Optional: verify from a terminal
 
 ```bash
-git clone {{TBD:repo-url}} lights-on && cd lights-on && pnpm install
-curl -s https://lights-on-watch.vercel.app/api/v1/evidence/{{TBD:sample-nightly-evidence-hash}} -o evidence.json
+git clone https://github.com/RaYYeR220/lights-on lights-on && cd lights-on && pnpm install
+curl -s https://lights-on-watch.vercel.app/api/v1/evidence/0xb993799119a667ed4b82d78af5b244b500a4ad6a4bc4c695e84a86f1a2e699d1 -o evidence.json
 pnpm tsx scripts/verify-night.ts --network base \
-  --uid {{TBD:sample-nightly-attestation-uid}} --bundle evidence.json \
+  --uid 0x8ea045042ae9243e0f7f8a674156878861a113fd6378ce927834575a847ab3df --bundle evidence.json \
   --site https://lights-on-watch.vercel.app --attester 0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6
 ```
 

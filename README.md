@@ -122,7 +122,7 @@ Quoted verbatim from `RULES_TEXT` in [`src/lib/shift/rules.ts`](src/lib/shift/ru
 | Live-run schema | `bytes32 projectKey,uint32 night,uint8 kind,uint8 status,uint16 lit30,bytes32 evidenceHash,uint256 agentId,string evidenceURI` |
 | Attester (watcher) | `0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6` |
 | ERC-8004 identity registry | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
-| Watcher agent id | `{{TBD:agent-id}}` · registration file: [/.well-known/agent-registration.json](https://lights-on-watch.vercel.app/.well-known/agent-registration.json) |
+| Watcher agent id | `1167163` · registration file: [/.well-known/agent-registration.json](https://lights-on-watch.vercel.app/.well-known/agent-registration.json) |
 
 **One transaction per night: a Merkle root of every project's verdict.** Each observed project-night is a leaf, `keccak256(abi.encode(projectKey, night, 0, status, lit30, evidenceHash))`. The leaves are sorted and hashed pairwise (each pair in ascending order) up to one `root`, which the nightly shift attests once; `count` says how many project-nights it covers, and `manifestURI` points at the night manifest, a canonical JSON list of every leaf whose keccak256 is the hash in the URI (unlisted projects appear by `projectKey`, without a slug). Every project-night of the night shares that attestation UID and carries its own proof, the sibling hashes from its leaf to the root. Up to 500 projects fit in one transaction, and its gas does not depend on how many leaves the root covers. A live run is attested on its own under the live-run schema.
 
@@ -202,7 +202,7 @@ Limits: live runs 3 per visitor per 10 minutes and 10 per visitor per day, 1 per
 Requires Node.js, pnpm and a Postgres database (a free Neon branch works).
 
 ```bash
-git clone {{TBD:repo-url}} lights-on && cd lights-on
+git clone https://github.com/RaYYeR220/lights-on lights-on && cd lights-on
 pnpm install
 cp .env.example .env.local          # set DATABASE_URL and NEXT_PUBLIC_SITE_URL at minimum
 pnpm exec drizzle-kit migrate       # creates the tables

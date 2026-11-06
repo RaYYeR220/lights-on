@@ -6,16 +6,16 @@ All artifacts are on Base mainnet (chain id 8453). Every write comes from one wa
 |---|---|---|
 | Watcher (attester) | `0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6` | https://basescan.org/address/0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6 |
 | Nightly root schema | UID `0xfe6c6dba61a36a6fbdf682e0d8bf3903a289ebb186e172c59aa9c578b673e726` | https://base.easscan.org/schema/view/0xfe6c6dba61a36a6fbdf682e0d8bf3903a289ebb186e172c59aa9c578b673e726 |
-| Root schema registration tx | `{{TBD:root-schema-registration-tx}}` | https://basescan.org/tx/{{TBD:root-schema-registration-tx}} |
+| Root schema registration tx | `0xb5b44d91e2417177b220f933ea9e53c95f7bd9b6c82de4126edc5d4feaa8e87b` | https://basescan.org/tx/0xb5b44d91e2417177b220f933ea9e53c95f7bd9b6c82de4126edc5d4feaa8e87b |
 | Live-run schema | UID `0x18fe45e82c5c9b1a176794774f023536a12794a76ee877ebfb0d713166e65d8b` | https://base.easscan.org/schema/view/0x18fe45e82c5c9b1a176794774f023536a12794a76ee877ebfb0d713166e65d8b |
-| Live-run schema registration tx | `{{TBD:schema-registration-tx}}` | https://basescan.org/tx/{{TBD:schema-registration-tx}} |
-| ERC-8004 agent registration tx | `{{TBD:agent-registration-tx}}` | https://basescan.org/tx/{{TBD:agent-registration-tx}} |
-| Watcher agent id | `{{TBD:agent-id}}` in registry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` | `ownerOf` and `tokenURI`, below |
-| First nightly root attestation tx | `{{TBD:first-nightly-root-tx}}` (night of `{{TBD:first-observed-night}}`) | https://basescan.org/tx/{{TBD:first-nightly-root-tx}} |
-| That night's root attestation | UID `{{TBD:sample-nightly-attestation-uid}}` (shared by every project-night of the night) | https://base.easscan.org/attestation/view/{{TBD:sample-nightly-attestation-uid}} |
-| That night's manifest | hash `{{TBD:first-nightly-manifest-hash}}` | https://lights-on-watch.vercel.app/api/v1/manifest/{{TBD:first-nightly-manifest-hash}} |
-| One project-night in it (revoke-cash) | evidence `{{TBD:sample-nightly-evidence-hash}}` | https://lights-on-watch.vercel.app/api/v1/projects/revoke-cash/nights?from={{TBD:first-observed-night}}&to={{TBD:first-observed-night}} |
-| A live-run attestation | UID `{{TBD:live-run-attestation-uid}}`, tx `{{TBD:live-run-tx}}` | https://base.easscan.org/attestation/view/{{TBD:live-run-attestation-uid}} |
+| Live-run schema registration tx | `0xe9a2214e894a7d07addf366cc19b9575e5ac8fa265ca12cd30508b446e84129c` | https://basescan.org/tx/0xe9a2214e894a7d07addf366cc19b9575e5ac8fa265ca12cd30508b446e84129c |
+| ERC-8004 agent registration tx | `0x694f47389cb7ae9c084310cb5e7a802c8e5421a5b0d4f39352fd48747e04534d` | https://basescan.org/tx/0x694f47389cb7ae9c084310cb5e7a802c8e5421a5b0d4f39352fd48747e04534d |
+| Watcher agent id | `1167163` in registry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` | `ownerOf` and `tokenURI`, below |
+| First nightly root attestation tx | `0x34f4b344304710c9fd75367a6a42d8e58875561b339da1737a1ec29dcdf1e167` (night of `2026-11-06`) | https://basescan.org/tx/0x34f4b344304710c9fd75367a6a42d8e58875561b339da1737a1ec29dcdf1e167 |
+| That night's root attestation | UID `0x8ea045042ae9243e0f7f8a674156878861a113fd6378ce927834575a847ab3df` (shared by every project-night of the night) | https://base.easscan.org/attestation/view/0x8ea045042ae9243e0f7f8a674156878861a113fd6378ce927834575a847ab3df |
+| That night's manifest | hash `0x786507ff4033a693c453e105c929cd4a1bdc5b81461e3a9114e870d2db4b93c9` | https://lights-on-watch.vercel.app/api/v1/manifest/0x786507ff4033a693c453e105c929cd4a1bdc5b81461e3a9114e870d2db4b93c9 |
+| One project-night in it (revoke-cash) | evidence `0xb993799119a667ed4b82d78af5b244b500a4ad6a4bc4c695e84a86f1a2e699d1` | https://lights-on-watch.vercel.app/api/v1/projects/revoke-cash/nights?from=20261106&to=20261106 |
+| A live-run attestation | UID `0x4f3f0709742dce694a70d8107b6a4494fe2ccc81a5f63629ef49a978b2116ecb`, tx `0x6c679e2fbe4fa9eeb4f0f1934b2dc5b60488776f4448c28498714c3f29e522b6` | https://base.easscan.org/attestation/view/0x4f3f0709742dce694a70d8107b6a4494fe2ccc81a5f63629ef49a978b2116ecb |
 
 Contracts used: EAS `0x4200000000000000000000000000000000000021` and SchemaRegistry `0x4200000000000000000000000000000000000020` (Base predeploys), ERC-8004 IdentityRegistry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`.
 
@@ -79,8 +79,8 @@ Expect each UID back with the zero address, `false`, and its schema string above
 **The watcher holds the agent identity, and it points at our registration file.**
 
 ```bash
-cast call 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 "ownerOf(uint256)(address)" {{TBD:agent-id}} --rpc-url $RPC
-cast call 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 "tokenURI(uint256)(string)" {{TBD:agent-id}} --rpc-url $RPC
+cast call 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 "ownerOf(uint256)(address)" 1167163 --rpc-url $RPC
+cast call 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 "tokenURI(uint256)(string)" 1167163 --rpc-url $RPC
 ```
 
 Expect `0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6` and `https://lights-on-watch.vercel.app/.well-known/agent-registration.json`. That file lists the web, MCP and REST endpoints and the same agent id.
@@ -90,7 +90,7 @@ Expect `0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6` and `https://lights-on-watch
 ```bash
 cast call 0x4200000000000000000000000000000000000021 \
   "getAttestation(bytes32)((bytes32,bytes32,uint64,uint64,uint64,bytes32,address,address,bool,bytes))" \
-  {{TBD:sample-nightly-attestation-uid}} --rpc-url $RPC
+  0x8ea045042ae9243e0f7f8a674156878861a113fd6378ce927834575a847ab3df --rpc-url $RPC
 ```
 
 The result is `(uid, schema, time, expirationTime, revocationTime, refUID, recipient, attester, revocable, data)`. Expect `schema` = the root schema UID, `expirationTime` and `revocationTime` = 0, `attester` = the watcher, `revocable` = false. Decode `data` with:
@@ -104,7 +104,7 @@ cast keccak "$(cat manifest.json)"     # equals the hash at the end of manifestU
 **A night matches its published evidence.**
 
 ```bash
-curl -s https://lights-on-watch.vercel.app/api/v1/evidence/{{TBD:sample-nightly-evidence-hash}} -o evidence.json
+curl -s https://lights-on-watch.vercel.app/api/v1/evidence/0xb993799119a667ed4b82d78af5b244b500a4ad6a4bc4c695e84a86f1a2e699d1 -o evidence.json
 cast keccak "$(cat evidence.json)"     # equals the evidence hash
 ```
 
@@ -119,7 +119,7 @@ and hashing it up with each `attestProof` step (keccak256 of the two hashes, the
 
 ```bash
 pnpm tsx scripts/verify-night.ts --network base \
-  --uid {{TBD:sample-nightly-attestation-uid}} --bundle evidence.json \
+  --uid 0x8ea045042ae9243e0f7f8a674156878861a113fd6378ce927834575a847ab3df --bundle evidence.json \
   --site https://lights-on-watch.vercel.app --attester 0x82e382eA991C5f48bFC565b8CfbcB6d91faD53D6
 ```
 
