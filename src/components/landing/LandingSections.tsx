@@ -54,7 +54,7 @@ function cards(raise: Raise | null): { who: string; text: string; links: Go[] }[
     {
       who: "Backers",
       text: "Paste the wallet you backed with and see how each project did last night, then get the morning briefing on Telegram or by web push.",
-      links: [{ href: "/b", label: "Check your bags" }],
+      links: [{ href: "/b", label: "Open the backer view" }],
     },
     {
       who: "Vibestarter raises",
