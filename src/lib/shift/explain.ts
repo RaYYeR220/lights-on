@@ -33,10 +33,16 @@ const MAX_SUMMARY = 280;
 const CLASSIFY_MAX_TOKENS = 700;
 const EXPLAIN_MAX_TOKENS = 300;
 const MAX_COMMIT_LINES = 60;
+const MAX_RELEASE_LINES = 10;
+/**
+ * Upper bound on classifiable refs: 60 commits + 10 releases + d1, d2, x1 = 73, with room to spare. Enforced in zod only:
+ * Venice answers HTTP 400 to a json_schema carrying maxItems, so CLASSIFY_JSON_SCHEMA must never get one.
+ */
+const MAX_CLASSIFY_ITEMS = 80;
 const MAX_NOTABLE_CHARS = 120;
 
 const ClassifySchema = z.object({
-  items: z.array(z.object({ ref: z.string(), kind: z.enum(['feature', 'fix', 'refactor', 'docs', 'deps', 'chore', 'unclear']) })).max(60),
+  items: z.array(z.object({ ref: z.string(), kind: z.enum(['feature', 'fix', 'refactor', 'docs', 'deps', 'chore', 'unclear']) })).max(MAX_CLASSIFY_ITEMS),
   ai_substance: z.enum(['substantive', 'mostly_cosmetic', 'unclear']),
   notable: z.array(z.string()),
 });
@@ -95,12 +101,14 @@ function buildInput(b: EvidenceBundle, d: Decision): { text: string; empty: bool
     lines.push(`${ref} commit:${clip(c.sha, 12)} kind=${c.kind} "${clip(c.message.split('\n')[0] ?? '', 200)}"${files}`);
   }
   if (allCommits.length > MAX_COMMIT_LINES) lines.push(`(+${allCommits.length - MAX_COMMIT_LINES} more commits not shown)`);
-  for (const r of repo?.releases ?? []) {
+  const allReleases = [...(repo?.releases ?? [])].sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
+  for (const r of allReleases.slice(0, MAX_RELEASE_LINES)) {
     count++;
     const ref = `r${++ri}`;
     refs.add(ref);
     lines.push(`${ref} release:${clip(r.tag, 80)} name="${clip(r.name ?? '', 120)}"`);
   }
+  if (allReleases.length > MAX_RELEASE_LINES) lines.push(`(+${allReleases.length - MAX_RELEASE_LINES} more releases not shown)`);
   if (live?.newDeploy) {
     count++;
     refs.add('d1');

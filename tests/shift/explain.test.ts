@@ -152,6 +152,44 @@ describe('explainNight', () => {
     expect(JSON.parse(f.mock.calls[1][1].body).messages[1].content).toContain('feature=60');
   });
 
+  it('a busy night (75 commits, 14 releases, deploy, site text, new contract): newest 60 commits and 10 releases, 73 refs accepted', async () => {
+    // dates out of order on purpose: the kept 60 must be the newest by date, not the first 60 listed
+    const commits = Array.from({ length: 75 }, (_, i) => commit({
+      sha: `sha${String(i).padStart(3, '0')}`,
+      date: new Date(Date.UTC(2026, 10, 5, 0, 0, 0) + ((i * 37) % 75) * 60_000).toISOString(),
+    }));
+    const newest = [...commits].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 60).map((c) => c.sha.slice(0, 12));
+    const releases = Array.from({ length: 14 }, (_, i) => ({ tag: `v1.${i}`, name: `R${i}`, date: `2026-11-05T0${i % 10}:${String(i).padStart(2, '0')}:00Z`, url: 'https://x.example' }));
+    const b = bundle(commits);
+    b.sources.repo!.facts!.releases = releases;
+    b.sources.liveapp = {
+      source: 'liveapp', tier: 'verified', ok: true,
+      facts: { url: 'https://a.example', finalUrl: null, httpStatus: 200, up: true, latencyMs: 1, deployFingerprint: 'f', textHash: 't', title: null, bytes: 1, newDeploy: true, textDelta: { added: ['New page'], removed: [], changedChars: 8 } },
+    };
+    b.sources.chain = { source: 'chain', tier: 'verified', ok: true, facts: { contracts: [], newDeployments: [{ address: '0x1', txHash: '0x2', at: '2026-11-05T01:00:00Z' }], holderDelta: null } };
+    const refs = [...Array.from({ length: 60 }, (_, i) => `c${i + 1}`), ...Array.from({ length: 10 }, (_, i) => `r${i + 1}`), 'd1', 'd2', 'x1'];
+    const c = JSON.stringify({ items: refs.map((ref) => ({ ref, kind: 'feature' })), ai_substance: 'substantive', notable: [] });
+    const f = seq(reply(c), reply('Many code changes and a release.'));
+    const r = await explainNight(b, decideStatus(b), deps(f));
+    expect(r.aiOk).toBe(true); // 73 items: over the old max(60), within 80
+    const user: string = JSON.parse(f.mock.calls[0][1].body).messages[1].content;
+    const shown = [...user.matchAll(/^c\d+ commit:(\S+)/gm)].map((m) => m[1]);
+    expect(shown).toEqual(newest);
+    expect(user).toContain('(+15 more commits not shown)');
+    expect(user.match(/^r\d+ release:/gm)).toHaveLength(10);
+    expect(user).toContain('(+4 more releases not shown)');
+    expect(user).toContain('release:v1.13'); // newest release kept
+    expect(user).not.toContain('release:v1.0 '); // oldest dropped
+    expect(JSON.parse(f.mock.calls[1][1].body).messages[1].content).toContain('feature=73');
+  });
+
+  it('more than 80 classified items is a schema failure (the cap lives in zod, not in the Venice schema)', async () => {
+    const items = Array.from({ length: 81 }, (_, i) => ({ ref: `c${i + 1}`, kind: 'feature' }));
+    const f = seq(reply(JSON.stringify({ items, ai_substance: 'substantive', notable: [] })));
+    const b = bundle();
+    expect((await explainNight(b, decideStatus(b), deps(f))).aiOk).toBe(false);
+  });
+
   it('injected AI summary with banned word / link is dropped', async () => {
     const f = seq(reply(CLS), reply('This looks like a rug.'));
     const b = bundle();
