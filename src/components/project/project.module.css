@@ -535,3 +535,16 @@
     transition: none;
   }
 }
+.pane.noted::before {
+  /* a founder note on this night (reported, never counted) */
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: -3px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 2px #0b111b;
+}

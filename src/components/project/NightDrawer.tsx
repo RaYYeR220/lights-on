@@ -173,6 +173,22 @@ function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; 
             </div>
           ) : null}
 
+          {n.founderNotes.length ? (
+            <div className={s.dSec} data-testid="founder-notes">
+              <h3>Founder note · REPORTED, never counted</h3>
+              {n.founderNotes.map((f) => (
+                <div key={`${f.at}-${f.note}`} className={s.src}>
+                  <p className={s.note} style={{ marginTop: 0 }}>
+                    {f.note}
+                  </p>
+                  <p className={s.small} style={{ margin: "6px 0 0" }}>
+                    Signed by the verified founder {f.author.slice(0, 6)}…{f.author.slice(-4)} on {f.at.slice(0, 10)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           {n.evidenceHash ? (
             <div className={s.dSec}>
               <h3>Evidence</h3>

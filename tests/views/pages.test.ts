@@ -4,9 +4,10 @@ import type { Db } from '@/lib/db';
 import { createNightlyShift, insertNight, saveEvidence, upsertProject } from '@/lib/db/queries';
 import { getProjectView } from '@/lib/views/project';
 import { getNightView } from '@/lib/views/night';
+import { openWindowOf, parseCampaigns } from '@/lib/views/vibestarterLive';
+import { founderNotes } from '@/lib/db/schema';
 import { nightLabel, parseNightParam, reasonLines, reasonText } from '@/lib/views/reasons';
-import { telegramStartToken, shortAddress } from '@/lib/views/backer';
-import { decodeStartToken } from '@/lib/notify/telegram';
+import { telegramLink, telegramProjectToken, telegramStartToken, shortAddress } from '@/lib/views/backer';
 import { NOTE_REASONS, REASONS } from '@/lib/shift/rules';
 import type { EvidenceBundle } from '@/lib/types';
 
@@ -32,10 +33,15 @@ describe('reasons', () => {
 });
 
 describe('telegram deep link', () => {
-  it('encodes {a} the way the bot decodes it', () => {
-    const a = '0x60bc5323c0e0e9144af0b35ce8de119fc743e345';
-    expect(decodeStartToken(telegramStartToken(a))).toEqual({ address: a });
-    expect(shortAddress(a)).toBe('0x60bc…e345');
+  it('uses a_<40 hex> / p_<slug> payloads that fit in 64 characters', () => {
+    const a = '0x60BC5323c0e0e9144af0b35ce8de119fc743e345';
+    expect(telegramStartToken(a)).toBe('a_60bc5323c0e0e9144af0b35ce8de119fc743e345');
+    expect(telegramProjectToken('corvo-edge')).toBe('p_corvo-edge');
+    expect(telegramLink('a_60bc', 'LightsOnBot')).toBe('https://t.me/LightsOnBot?start=a_60bc');
+    expect(telegramLink('a_60bc', '@LightsOnBot')).toBe('https://t.me/LightsOnBot?start=a_60bc');
+    expect(telegramLink('a_60bc', undefined)).toBeNull();
+    expect(telegramLink(`p_${'x'.repeat(70)}`, 'LightsOnBot')).toBeNull();
+    expect(shortAddress(a)).toBe('0x60BC…e345');
   });
 });
 
@@ -80,6 +86,36 @@ describe('getProjectView', () => {
   });
 });
 
+describe('project page extras', () => {
+  it('founder notes land on their night; community and claim flags are exposed', async () => {
+    const p = await upsertProject(db, { slug: 'cm', name: 'CM', source: 'community', claimedBy: '0xabc', claimVerifiedAt: new Date('2026-11-01T00:00:00Z') });
+    await insertNight(db, { projectId: p.id, night: '2026-11-05', status: 'building', observed: true });
+    await db.insert(founderNotes).values({ projectId: p.id, night: '2026-11-05', note: 'Shipped the fix behind a flag.', author: '0xabc', signature: '0x00' });
+    const v = (await getProjectView(db, 'cm', { now: NOW }))!;
+    expect(v.communityAdded).toBe(true);
+    expect(v.claimedBy).toBe('0xabc');
+    expect(v.strip[88].founderNotes).toEqual([expect.objectContaining({ note: 'Shipped the fix behind a flag.', author: '0xabc' })]);
+    expect(v.strip[89].founderNotes).toEqual([]);
+    // the note never changes the night's status
+    expect(v.strip[88].status).toBe('building');
+  });
+
+  it('parses the live Vibestarter tranche schedule and finds an open challenge window', () => {
+    const raw = { campaigns: [{ id: 'c1', status: 'FUNDED', contributorCount: 3, tranches: [
+      { orderIndex: 1, status: 'REQUESTED', releasePercent: 15, requestedAt: '2026-11-13T12:00:00Z', challengeWindowEndsAt: '2026-11-16T12:00:00Z', amountPaid: null, _count: { challenges: 0 } },
+      { orderIndex: 0, status: 'PAID', releasePercent: 10, isKickstart: true, requestedAt: null, challengeWindowEndsAt: null, amountPaid: '116964250000000000' },
+      { status: 'LOCKED' },
+    ] }, { nope: true }] };
+    const m = parseCampaigns(raw, '2026-11-14T00:00:00.000Z');
+    expect(Object.keys(m)).toEqual(['c1']);
+    expect(m.c1.tranches.map((t) => [t.index, t.status])).toEqual([[0, 'PAID'], [1, 'REQUESTED']]);
+    expect(m.c1.tranches[0].amountPaidWei).toBe('116964250000000000');
+    expect(openWindowOf(m.c1.tranches, Date.parse('2026-11-14T00:00:00Z'))?.index).toBe(1);
+    expect(openWindowOf(m.c1.tranches, Date.parse('2026-11-17T00:00:00Z'))).toBeNull();
+    expect(parseCampaigns(null, 'x')).toEqual({});
+  });
+});
+
 describe('getNightView', () => {
   it('before the first live shift: the newest reconstructed night, as a preview', async () => {
     const a = await upsertProject(db, { slug: 'a', name: 'A', source: 'base' });
@@ -111,6 +147,10 @@ describe('getNightView', () => {
     expect(v.txs).toEqual(['0xaa']);
     expect(v.rows[0].whatShipped).toEqual(['New pools page']);
     expect(v.shift?.planned).toBe(2);
+    // community-added projects are unlisted: never on the shift page
+    const c = await upsertProject(db, { slug: 'c', name: 'C', source: 'community' });
+    await insertNight(db, { projectId: c.id, night: '2026-11-06', status: 'shipped', observed: true, shiftId: shift.id });
+    expect((await getNightView(db)).rows.map((r) => r.slug)).toEqual(['b', 'a']);
     // a date without a live shift is never shown as one
     const old = await getNightView(db, 20261101);
     expect(old.mode).toBe('empty');

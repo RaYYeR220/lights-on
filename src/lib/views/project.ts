@@ -1,7 +1,7 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, sql } from 'drizzle-orm';
 import type { Db } from '@/lib/db';
 import { getNights, getProjectBySlug } from '@/lib/db/queries';
-import { evidence, nights, type NightRow, type ProjectRow } from '@/lib/db/schema';
+import { evidence, founderNotes, nights, type NightRow, type ProjectRow } from '@/lib/db/schema';
 import { sanitizeSummary } from '@/lib/shift/explain';
 import { computeRecord } from '@/lib/shift/rules';
 import { nightDate, nightNumber, nightOf, shiftStartFor } from '@/lib/shift/night';
@@ -27,6 +27,8 @@ export interface StripNight {
   /** Reconstruction source ('git', 'wayback', 'git+wayback') and the Wayback capture note, when reconstructed. */
   reconstructedFrom: string | null;
   note: string | null;
+  /** Founder notes for this night (REPORTED tier: shown, never counted). */
+  founderNotes: { note: string; author: string; at: string }[];
 }
 
 export interface ProjectView {
@@ -34,6 +36,10 @@ export interface ProjectView {
   name: string;
   tagline: string | null;
   source: ProjectRow['source'];
+  /** Added through /add by anyone: unverified, unlisted on the tower. */
+  communityAdded: boolean;
+  /** Wallet that verified a founder claim, if any. */
+  claimedBy: string | null;
   liveUrl: string | null;
   repoUrl: string | null;
   repo: string | null;
@@ -58,7 +64,7 @@ export interface ProjectView {
 const asStrings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 const isRec = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-function stripNight(night: number, obs: NightRow | undefined, rec: NightRow | undefined): StripNight {
+function stripNight(night: number, obs: NightRow | undefined, rec: NightRow | undefined, notes: StripNight['founderNotes']): StripNight {
   const row = obs ?? rec;
   const signals = isRec(row?.signals) ? row!.signals : {};
   const summary = row?.summary ? sanitizeSummary(row.summary) : null;
@@ -76,6 +82,7 @@ function stripNight(night: number, obs: NightRow | undefined, rec: NightRow | un
     attestTx: obs?.attestTx ?? null,
     reconstructedFrom: !obs && typeof signals.source === 'string' ? signals.source : null,
     note: !obs && typeof signals.note === 'string' ? signals.note : null,
+    founderNotes: notes,
   };
 }
 
@@ -86,7 +93,7 @@ export async function getProjectView(db: Db, slug: string, opts: { now?: Date } 
   const now = opts.now ?? new Date();
   const lastNight = nightNumber(shiftStartFor(now));
   const window = nightsEndingAt(lastNight, TOWER_NIGHTS);
-  const [rows, vsRows] = await Promise.all([
+  const [rows, vsRows, noteRows] = await Promise.all([
     getNights(db, p.id, { from: nightDate(window[0]), to: nightDate(lastNight) }),
     p.vibestarter
       ? db
@@ -97,12 +104,24 @@ export async function getProjectView(db: Db, slug: string, opts: { now?: Date } 
           .orderBy(desc(nights.night), desc(nights.observed))
           .limit(1)
       : Promise.resolve([] as { night: string; facts: unknown }[]),
+    db
+      .select({ night: founderNotes.night, note: founderNotes.note, author: founderNotes.author, createdAt: founderNotes.createdAt })
+      .from(founderNotes)
+      .where(and(eq(founderNotes.projectId, p.id), gte(founderNotes.night, nightDate(window[0]))))
+      .orderBy(asc(founderNotes.createdAt)),
   ]);
+  const notesBy = new Map<number, StripNight['founderNotes']>();
+  for (const n of noteRows) {
+    const k = nightOf(n.night);
+    const list = notesBy.get(k) ?? [];
+    list.push({ note: n.note, author: n.author, at: new Date(n.createdAt).toISOString() });
+    notesBy.set(k, list);
+  }
 
   const obs = new Map<number, NightRow>();
   const rec = new Map<number, NightRow>();
   for (const r of rows) (r.observed ? obs : rec).set(nightOf(r.night), r);
-  const strip = window.map((n) => stripNight(n, obs.get(n), rec.get(n)));
+  const strip = window.map((n) => stripNight(n, obs.get(n), rec.get(n), notesBy.get(n) ?? []));
 
   const latestObs = [...obs.keys()].sort((a, b) => b - a)[0];
   const latestRec = [...rec.keys()].sort((a, b) => b - a)[0];
@@ -120,6 +139,8 @@ export async function getProjectView(db: Db, slug: string, opts: { now?: Date } 
     name: p.name,
     tagline: p.tagline,
     source: p.source,
+    communityAdded: p.source === 'community',
+    claimedBy: p.claimVerifiedAt && p.claimedBy ? p.claimedBy : null,
     liveUrl: p.liveUrl,
     repoUrl,
     repo: p.repo,

@@ -8,6 +8,8 @@ import { SOURCE_LABEL } from "@/components/tower/model";
 import { NightStrip } from "@/components/project/NightStrip";
 import { LiveShift } from "@/components/project/LiveShift";
 import { Tranches } from "@/components/project/Tranches";
+import { getLiveCampaign } from "@/lib/views/vibestarterLive";
+import { shortAddress, telegramLink, telegramProjectToken } from "@/lib/views/backer";
 import s from "@/components/project/project.module.css";
 
 /** ISR: a project page is rebuilt from the DB at most every 5 minutes. */
@@ -41,10 +43,20 @@ export default async function ProjectPage({ params }: PageProps<"/p/[slug]">) {
 
   const when = v.statusNight === null ? "" : v.statusNight === v.lastNight ? " last night" : ` on ${nightLabel(v.statusNight)}`;
   const base = v.contracts.filter((c) => c.chainId === 8453);
+  const live = v.vibestarter ? await getLiveCampaign(v.vibestarter.campaignId) : null;
+  const tg = telegramLink(telegramProjectToken(v.slug));
   return (
     <main id="main" className="wrap page-top">
       <p className="eyebrow rv">
-        <span>{SOURCE_LABEL[v.source] ?? v.source}</span>
+        {v.communityAdded ? (
+          <span className="tag" data-testid="community-label">
+            <i className="sw sw-none" aria-hidden="true" />
+            Community-added · unverified
+          </span>
+        ) : (
+          <span>{SOURCE_LABEL[v.source] ?? v.source}</span>
+        )}
+        {v.claimedBy ? <span>Claimed by its founder {shortAddress(v.claimedBy)}</span> : null}
         <Link className="ul" href="/">
           Back to the building
         </Link>
@@ -69,7 +81,21 @@ export default async function ProjectPage({ params }: PageProps<"/p/[slug]">) {
             {c.role || "contract"} {c.address.slice(0, 6)}…{c.address.slice(-4)}
           </a>
         ))}
+        {tg ? (
+          <a className="ul" href={tg} target="_blank" rel="noreferrer">
+            Follow on Telegram
+          </a>
+        ) : null}
+        <Link className="ul" href={`/claim/${v.slug}`}>
+          {v.claimedBy ? "Founder tools" : "Is this your project? Claim it"}
+        </Link>
       </p>
+      {v.communityAdded ? (
+        <p className="k rv d2" style={{ marginTop: 12 }}>
+          Added by someone on the watch list form. Its sources are not verified by us and it stays off the building until it is
+          reviewed; the readings below follow the same rules as every other project.
+        </p>
+      ) : null}
 
       <section className={`panel ${s.status} rv d2`} aria-label="Current status" data-testid="project-status">
         <i className={`${s.big} sw ${swatch(v.status)}`} aria-hidden="true" />
@@ -148,7 +174,7 @@ export default async function ProjectPage({ params }: PageProps<"/p/[slug]">) {
       <div className={s.cols}>
         <LiveShift slug={v.slug} />
         {v.vibestarter ? (
-          <Tranches vibestarter={v.vibestarter} facts={v.vibestarterFacts} now={v.generatedAt} />
+          <Tranches vibestarter={v.vibestarter} live={live} facts={v.vibestarterFacts} now={v.generatedAt} />
         ) : (
           <section className={`panel ${s.card}`} aria-labelledby="watch-title">
             <div className={s.cardHead}>

@@ -11,7 +11,7 @@ const CODE = { shipped: "s", building: "b", quiet: "q", down: "d", unavailable: 
 function paneLabel(n: StripNight): string {
   const day = nightLabel(n.night, true);
   if (!n.status) return `${day}: no reading`;
-  return `${day}: ${STATUS_LABEL[n.status].toLowerCase()}${n.observed ? "" : ", reconstructed"}`;
+  return `${day}: ${STATUS_LABEL[n.status].toLowerCase()}${n.observed ? "" : ", reconstructed"}${n.founderNotes.length ? ", founder note" : ""}`;
 }
 
 /** The project's last 90 nights as one ribbon window (3 sashes of 30 lites); each lite opens that night. */
@@ -54,7 +54,7 @@ export function NightStrip({ slug, strip, watcher }: { slug: string; strip: Stri
           >
             {strip.map((n, i) => {
               const code = n.status ? CODE[n.status] : "none";
-              const cls = [s.pane, s[code], n.status && !n.observed ? s.rec : "", i === last ? s.last : ""].join(" ");
+              const cls = [s.pane, s[code], n.status && !n.observed ? s.rec : "", i === last ? s.last : "", n.founderNotes.length ? s.noted : ""].join(" ");
               return (
                 <Fragment key={n.night}>
                   {i > 0 && i % 30 === 0 ? <i className={s.row3} aria-hidden="true" /> : null}
