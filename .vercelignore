@@ -1,0 +1,8 @@
+.superpowers
+.env*
+!.env.example
+.claude
+results/raw
+test-results
+playwright-report
+coverage
