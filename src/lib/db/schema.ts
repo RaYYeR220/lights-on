@@ -137,7 +137,18 @@ export const subscriptions = pgTable('subscriptions', {
   projectIds: integer('project_ids').array().notNull().default(sql`'{}'::integer[]`),
   createdAt: tsz('created_at').notNull().defaultNow(),
   lastSentAt: tsz('last_sent_at'),
-}, () => [check('subscriptions_channel_chk', inList('channel', CHANNELS))]);
+  /** sha256 of the push endpoint (webpush rows): upsert/delete key. */
+  endpointHash: text('endpoint_hash'),
+  /** Salted requester hash at creation (webpush rate limit). */
+  ipHash: text('ip_hash'),
+  /** Last on-demand AI briefing (1 per chat per hour). */
+  aiBriefAt: tsz('ai_brief_at'),
+}, (t) => [
+  check('subscriptions_channel_chk', inList('channel', CHANNELS)),
+  uniqueIndex('subscriptions_channel_target_uq').on(t.channel, t.target),
+  uniqueIndex('subscriptions_endpoint_hash_uq').on(t.endpointHash),
+  index('subscriptions_pending_idx').on(t.lastSentAt, t.id),
+]);
 
 export const founderNotes = pgTable('founder_notes', {
   id: serial('id').primaryKey(),

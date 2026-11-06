@@ -36,6 +36,20 @@
       "when": 1793935230830,
       "tag": "0004_attest_sent_at",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793949786569,
+      "tag": "0005_subscription_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793951869427,
+      "tag": "0006_backfill_endpoint_hash",
+      "breakpoints": true
     }
   ]
 }

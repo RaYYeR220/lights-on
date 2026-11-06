@@ -71,7 +71,14 @@ function render(input: BriefingInput, nowMs: number, lv: Level): string[] {
 
 /** Deterministic template (source of truth), <= 1200 chars. */
 export function templateBriefing(input: BriefingInput, nowMs: number): string {
-  for (const lv of LEVELS) {
+  const t = templateRaw(input, nowMs);
+  if (!BANNED.test(t)) return t;
+  // Copy rule: drop the summaries first; if a project name itself trips it, blank the word.
+  return templateRaw(input, nowMs, 2).replace(new RegExp(BANNED.source, 'gi'), '…');
+}
+
+function templateRaw(input: BriefingInput, nowMs: number, from = 0): string {
+  for (const lv of LEVELS.slice(from)) {
     const t = render(input, nowMs, lv).join('\n');
     if (t.length <= BRIEFING_MAX) return t;
   }

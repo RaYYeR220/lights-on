@@ -1,5 +1,8 @@
 import { getDb } from '@/lib/db';
+import { bumpBudget } from '@/lib/db/queries';
 import { json, secretEquals } from '@/lib/net/http';
+import { CAPS } from '@/lib/shift/limits';
+import { utcDay } from '@/lib/shift/night';
 import { safeErrorCode } from '@/lib/net/redact';
 import { handleTelegramUpdate, sendMessage } from '@/lib/notify/telegram';
 
@@ -23,6 +26,14 @@ export async function POST(req: Request): Promise<Response> {
     await handleTelegramUpdate(update, {
       db,
       send: (chat, text) => sendMessage(chat, text, { token }),
+      // On-demand /brief may polish with AI (once per chat per hour); same cap as live runs so the nightly shift keeps its reserve.
+      briefing: process.env.VENICE_API_KEY
+        ? {
+            ai: {
+              budget: (n) => bumpBudget(db, utcDay(new Date()), 'llm_tokens', n, CAPS.llmTokensPerDay - CAPS.nightlyReserveTokens),
+            },
+          }
+        : undefined,
     });
   } catch (e) {
     // 200 anyway: Telegram would retry the same update forever.
