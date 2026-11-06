@@ -133,8 +133,24 @@ const toIso = (v: string | null): string | null => {
 
 const nightNum = (d: string) => Number(d.slice(0, 10).replace(/-/g, ''));
 
-/** Deterministic window order: by source, then name (case-insensitive), then slug. */
-export function towerOrder(a: { source: string; name: string; slug: string }, b: { source: string; name: string; slug: string }): number {
+interface Orderable {
+  source: string;
+  name: string;
+  slug: string;
+  /** Stored window position (a planned projects.bay column); used first when present. */
+  bay?: unknown;
+}
+const bayOf = (p: Orderable): number | null => (typeof p.bay === 'number' && Number.isFinite(p.bay) ? p.bay : null);
+
+/** Deterministic window order: by stored bay when a project has one, else by source, then name (case-insensitive), then slug. */
+export function towerOrder(a: Orderable, b: Orderable): number {
+  const ab = bayOf(a);
+  const bb = bayOf(b);
+  if (ab !== null || bb !== null) {
+    if (ab === null) return 1;
+    if (bb === null) return -1;
+    if (ab !== bb) return ab - bb;
+  }
   if (a.source !== b.source) return a.source < b.source ? -1 : 1;
   const an = a.name.toLowerCase();
   const bn = b.name.toLowerCase();
@@ -154,10 +170,8 @@ export async function getTowerData(db: Db, opts: { now?: Date } = {}): Promise<T
   const to = nightDate(lastNight);
 
   const [projRows, res] = await Promise.all([
-    db
-      .select({ id: projects.id, slug: projects.slug, name: projects.name, source: projects.source })
-      .from(projects)
-      .where(eq(projects.hidden, false)),
+    // every column, so a future `bay` column is picked up without a change here
+    db.select().from(projects).where(eq(projects.hidden, false)),
     db.execute(sql`
       SELECT x.project_id AS "projectId", x.night::text AS night, x.status, x.observed, x.attested,
         CASE WHEN x.latest THEN x.summary END AS summary,

@@ -5,7 +5,7 @@ import { baysFor, computeGeometry } from '@/components/tower/geometry';
 import { towerPrePaintScript } from '@/components/tower/prePaintScript';
 import { normalizeBagsInput } from '@/components/bags/address';
 import { countdown } from '@/components/tower/engine';
-import type { TowerData, TowerProject } from '@/lib/views/tower';
+import { towerOrder, type TowerData, type TowerProject } from '@/lib/views/tower';
 
 const project = (slug: string, extra: Partial<TowerProject> = {}): TowerProject => ({
   slug, name: slug, source: 'base', status: null, statusObserved: false, statusNight: null, summary: null,
@@ -102,6 +102,18 @@ describe('bags input', () => {
     expect(normalizeBagsInput('vitalik')).toBeNull();
     expect(normalizeBagsInput('<script>.eth')).toBeNull();
     expect(normalizeBagsInput('')).toBeNull();
+  });
+});
+
+describe('towerOrder', () => {
+  it('uses a stored bay first, then source and name', () => {
+    const ps = [
+      { slug: 'z', name: 'Zed', source: 'base' },
+      { slug: 'b', name: 'Beta', source: 'base', bay: 5 },
+      { slug: 'a', name: 'Alpha', source: 'vibeathon01', bay: 2 },
+      { slug: 'c', name: 'aave', source: 'base', bay: null },
+    ];
+    expect([...ps].sort(towerOrder).map((p) => p.slug)).toEqual(['a', 'b', 'c', 'z']);
   });
 });
 
