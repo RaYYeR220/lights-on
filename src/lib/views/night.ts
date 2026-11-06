@@ -39,6 +39,8 @@ export interface NightView {
   /** Neighbouring observed nights, for navigation. */
   prev: number | null;
   next: number | null;
+  /** When the view was built (ms). */
+  generatedAt: number;
 }
 
 interface Raw extends WorkRow {
@@ -112,7 +114,12 @@ function view(raw: Raw[]): Pick<NightView, 'rows' | 'counts'> {
  * The shift for one night (observed rows only). Without a date: the latest observed night, or, before the first
  * live shift, the latest reconstructed night as a labelled preview.
  */
-export async function getNightView(db: Db, night?: number): Promise<NightView> {
+export async function getNightView(db: Db, night?: number, opts: { now?: Date } = {}): Promise<NightView> {
+  const generatedAt = (opts.now ?? new Date()).getTime();
+  return { ...(await buildNightView(db, night)), generatedAt };
+}
+
+async function buildNightView(db: Db, night?: number): Promise<Omit<NightView, 'generatedAt'>> {
   const [latest] = await db
     .select({ n: sql<string | null>`max(${nights.night})::text` })
     .from(nights)

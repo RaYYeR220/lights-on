@@ -13,7 +13,7 @@ export function formatLeft(ms: number): string {
   return `${d > 0 ? `${d}d ` : ""}${hh}:${mm}:${ss}`;
 }
 
-export function Countdown({ to }: { to: string }) {
+export function Countdown({ to, doneText = "closed" }: { to: string; doneText?: string }) {
   const end = Date.parse(to);
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
@@ -25,5 +25,5 @@ export function Countdown({ to }: { to: string }) {
       clearInterval(t);
     };
   }, []);
-  return <b suppressHydrationWarning>{now === null ? "…" : formatLeft(end - now)}</b>;
+  return <b suppressHydrationWarning>{now === null ? "…" : end - now <= 0 ? doneText : formatLeft(end - now)}</b>;
 }

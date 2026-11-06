@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
-import { StubPage } from "@/components/chassis/StubPage";
+import { getDb } from "@/lib/db";
+import { getNightView } from "@/lib/views/night";
+import { NightShift } from "@/components/night/NightShift";
 
 export const metadata: Metadata = { title: "Last night · Lights On" };
+export const revalidate = 300;
 
-export default function NightPage() {
-  return (
-    <StubPage
-      title="Last night's shift"
-      lede="Every watched project, in the order the agent checked it, with what reached users and the attestation for each verdict on Base."
-    />
-  );
+export default async function NightPage() {
+  const view = await getNightView(await getDb());
+  return <NightShift view={view} asked={null} now={view.generatedAt} />;
 }
