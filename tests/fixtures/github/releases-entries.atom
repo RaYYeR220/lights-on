@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="en-US">
+  <id>tag:github.com,2008:https://github.com/RevokeCash/revoke.cash/releases</id>
+  <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/releases"/>
+  <title>Release notes from revoke.cash</title>
+  <updated>2026-11-04T13:05:00Z</updated>
+  <entry>
+    <id>tag:github.com,2008:Repository/214661246/v2.4.0</id>
+    <updated>2026-11-04T13:05:00Z</updated>
+    <link rel="alternate" type="text/html" href="https://github.com/RevokeCash/revoke.cash/releases/tag/v2.4.0"/>
+    <title>Matchain support</title>
+    <content type="html">&lt;p&gt;notes&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Repository/214661246/v2.3.0</id>
+    <updated>2026-10-01T13:05:00Z</updated>
+    <link rel="alternate" type="text/html" href="https://github.com/RevokeCash/revoke.cash/releases/tag/v2.3.0"/>
+    <title>v2.3.0</title>
+  </entry>
+</feed>

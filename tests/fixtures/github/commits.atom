@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="en-US">
+  <id>tag:github.com,2008:/RevokeCash/revoke.cash/commits/master</id>
+  <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commits/master"/>
+  <link type="application/atom+xml" rel="self" href="https://github.com/RevokeCash/revoke.cash/commits/master.atom"/>
+  <title>Recent Commits to revoke.cash:master</title>
+  <updated>2026-11-05T19:52:30Z</updated>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/f9baa19408004355473b2771c002df94f8a0ba9e</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/f9baa19408004355473b2771c002df94f8a0ba9e"/>
+    <title>
+        fix: fix Etherlink and Citrea event indexing and remove Matchain (#318)
+    </title>
+    <updated>2026-11-05T19:52:30Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: fix Etherlink and Citrea event indexing and remove Matchain (#318)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/4775ef5f48187a7b8faae8056396075cb7ec7701</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/4775ef5f48187a7b8faae8056396075cb7ec7701"/>
+    <title>
+        fix: split BNB Chain log requests that Alchemy rejects (#317)
+    </title>
+    <updated>2026-11-03T19:54:16Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: split BNB Chain log requests that Alchemy rejects (#317)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/064caf630183fd6f906824505955544be12aaaae</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/064caf630183fd6f906824505955544be12aaaae"/>
+    <title>
+        fix: keep multicall3 in exploit stats for genesis predeploys (#311)
+    </title>
+    <updated>2026-11-03T19:16:51Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/327801004?s=30&amp;v=4"/>
+    <author>
+      <name>hey-research-lab</name>
+      <uri>https://github.com/hey-research-lab</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: keep multicall3 in exploit stats for genesis predeploys (#311)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/6f6e6db126d0d075998a40a57a2c46e34b14117c</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/6f6e6db126d0d075998a40a57a2c46e34b14117c"/>
+    <title>
+        chore: remove references to removed signature dashboard (#316)
+    </title>
+    <updated>2026-11-03T18:59:51Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: remove references to removed signature dashboard (#316)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/245999e085fd0414fd7ef3692e8dbf813426acf5</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/245999e085fd0414fd7ef3692e8dbf813426acf5"/>
+    <title>
+        fix: switch ApeChain from Etherscan to Blockscout (#315)
+    </title>
+    <updated>2026-11-03T18:57:56Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: switch ApeChain from Etherscan to Blockscout (#315)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/1fb762b7fa8bc13c776f168cc61b28126512e1a9</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/1fb762b7fa8bc13c776f168cc61b28126512e1a9"/>
+    <title>
+        fix: pause indexing for smart contracts with over 1M events (#313)
+    </title>
+    <updated>2026-11-03T18:35:25Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: pause indexing for smart contracts with over 1M events (#313)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/022c8e7073f97b87cfbb66ebe96f99463e61f57b</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/022c8e7073f97b87cfbb66ebe96f99463e61f57b"/>
+    <title>
+        fix: small formatting fix
+    </title>
+    <updated>2026-10-30T22:03:56Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: small formatting fix&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/1218370e47bd5f8e0edb838d652a6bbb00ba25e4</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/1218370e47bd5f8e0edb838d652a6bbb00ba25e4"/>
+    <title>
+        fix: add automated orphan job cleanup in indexer
+    </title>
+    <updated>2026-10-26T20:56:28Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: add automated orphan job cleanup in indexer&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/505929b9a4d219d3d7bed5e3e84c74f82f3e9697</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/505929b9a4d219d3d7bed5e3e84c74f82f3e9697"/>
+    <title>
+        feat: add &#39;compromised seed phrase&#39; notice if address is 7702-delegat…
+    </title>
+    <updated>2026-10-26T20:55:41Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;feat: add &amp;#39;compromised seed phrase&amp;#39; notice if address is 7702-delegated to a known scammer delegate&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/5be711e1ac3d604d6d906e310e4c19b07e7a186f</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/5be711e1ac3d604d6d906e310e4c19b07e7a186f"/>
+    <title>
+        chore: remove support for Blast and DATA Network
+    </title>
+    <updated>2026-10-24T21:24:48Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: remove support for Blast and DATA Network&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/fac83d9100b092ddb22bc9d0df6827a952c8ff86</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/fac83d9100b092ddb22bc9d0df6827a952c8ff86"/>
+    <title>
+        fix: add some nudges for misconfigured Ultimate users
+    </title>
+    <updated>2026-10-24T20:54:38Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: add some nudges for misconfigured Ultimate users&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/e8ec45606969e7394abbe032d48749f4ca9ab5c0</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/e8ec45606969e7394abbe032d48749f4ca9ab5c0"/>
+    <title>
+        fix: temporarily disable Pudgy SBT claim
+    </title>
+    <updated>2026-10-19T14:46:40Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: temporarily disable Pudgy SBT claim&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/0ca02416c92f85d52751af376324c03d4aa195e9</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/0ca02416c92f85d52751af376324c03d4aa195e9"/>
+    <title>
+        fix: several wallet connection fixes
+    </title>
+    <updated>2026-10-19T01:16:27Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: several wallet connection fixes
+
+- Fix Safe EIP5782 batch revoking
+- Show login errors on account page
+- Fix transaction subcmitted toast for Safe wallets
+- Do not show disconnect button on Ledger and Safe connectors
+- Use the &amp;quot;Safe transaction hash&amp;quot; for Safe transactions
+- Fix chain switch error handling
+- Redirect to correct connected chain on Safe or Ledger connectors
+- Don&amp;#39;t allow Safe on alternative domains&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/d267e9d0fa3b610c3742f0b4c3889c93863b30a3</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/d267e9d0fa3b610c3742f0b4c3889c93863b30a3"/>
+    <title>
+        fix: add fee balance check before batch revoke
+    </title>
+    <updated>2026-10-14T01:12:51Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: add fee balance check before batch revoke&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/ed518888f1d31b4d8b32349163af013ddcc67054</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/ed518888f1d31b4d8b32349163af013ddcc67054"/>
+    <title>
+        chore: remove CLAUDE.md in favor of AGENTS.md (#309)
+    </title>
+    <updated>2026-10-14T00:54:56Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/10536950?s=30&amp;v=4"/>
+    <author>
+      <name>jarrensj</name>
+      <uri>https://github.com/jarrensj</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: remove CLAUDE.md in favor of AGENTS.md (#309)
+
+Claude Code reads AGENTS.md when a project has no CLAUDE.md (v2.1.277),
+so the CLAUDE.md that only imported @AGENTS.md is no longer needed.&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/124d010cdede210cabdefadbfd9b5146e39502f0</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/124d010cdede210cabdefadbfd9b5146e39502f0"/>
+    <title>
+        fix: fix yarn.lock
+    </title>
+    <updated>2026-10-12T22:07:29Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: fix yarn.lock&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/caef364b87e1f87dd259f99639a2c0b12ebaea38</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/caef364b87e1f87dd259f99639a2c0b12ebaea38"/>
+    <title>
+        fix: redact API keys in errors and fix opBNB support
+    </title>
+    <updated>2026-10-12T22:01:12Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: redact API keys in errors and fix opBNB support&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/5a64b92f4dec33c2935cc4cd3d8a3791c8b8bded</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/5a64b92f4dec33c2935cc4cd3d8a3791c8b8bded"/>
+    <title>
+        fix: some wallet connection issues
+    </title>
+    <updated>2026-10-12T22:00:10Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix: some wallet connection issues
+
+- Remove WalletConnect redirect
+- Improve wallet connector ordering and filtering
+- Add additional connection error handling
+- Add chain mismatch error handling
+- Fix chain switch error handling&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/7a78afec62b1c56364a02e50fe82d4c56afbd792</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/7a78afec62b1c56364a02e50fe82d4c56afbd792"/>
+    <title>
+        docs: update magic eden exploit entry after some time has passed
+    </title>
+    <updated>2026-10-12T16:59:08Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;docs: update magic eden exploit entry after some time has passed&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/cc78a9f3730c630afb1e010f8ff85d874f409080</id>
+    <link type="text/html" rel="alternate" href="https://github.com/RevokeCash/revoke.cash/commit/cc78a9f3730c630afb1e010f8ff85d874f409080"/>
+    <title>
+        chore: remove embed stuff
+    </title>
+    <updated>2026-10-11T19:20:01Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/9142187?s=30&amp;v=4"/>
+    <author>
+      <name>rkalis</name>
+      <uri>https://github.com/rkalis</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: remove embed stuff&lt;/pre&gt;
+    </content>
+  </entry>
+</feed>

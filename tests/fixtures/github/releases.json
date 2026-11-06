@@ -1,0 +1,5 @@
+[
+  { "tag_name": "v2.4.0", "name": "Matchain support", "draft": false, "prerelease": false, "created_at": "2026-11-04T13:00:00Z", "published_at": "2026-11-04T13:05:00Z", "html_url": "https://github.com/RevokeCash/revoke.cash/releases/tag/v2.4.0" },
+  { "tag_name": "v2.3.0", "name": null, "draft": false, "prerelease": false, "created_at": "2026-10-01T13:00:00Z", "published_at": "2026-10-01T13:05:00Z", "html_url": "https://github.com/RevokeCash/revoke.cash/releases/tag/v2.3.0" },
+  { "tag_name": "v2.5.0-draft", "name": "draft", "draft": true, "prerelease": false, "created_at": "2026-11-04T14:00:00Z", "published_at": null, "html_url": "https://github.com/RevokeCash/revoke.cash/releases/tag/v2.5.0-draft" }
+]

@@ -1,0 +1,11 @@
+{
+  "commit": { "id": "1111111111111111111111111111111111111111" },
+  "commits": [
+    { "id": "2222222222222222222222222222222222222222" },
+    { "id": "1111111111111111111111111111111111111111" }
+  ],
+  "diffs": [
+    { "old_path": "src/parser.ts", "new_path": "src/parser.ts", "new_file": false, "deleted_file": false },
+    { "old_path": "README.md", "new_path": "README.md", "new_file": false, "deleted_file": false }
+  ]
+}

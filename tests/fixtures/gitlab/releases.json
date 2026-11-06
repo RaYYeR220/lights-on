@@ -1,0 +1,4 @@
+[
+  { "tag_name": "v0.3.0", "name": "Parser", "released_at": "2026-11-05T10:00:00.000Z", "_links": { "self": "https://gitlab.com/acme/widget/-/releases/v0.3.0" } },
+  { "tag_name": "v0.2.0", "name": "Old", "released_at": "2026-09-05T10:00:00.000Z", "_links": { "self": "https://gitlab.com/acme/widget/-/releases/v0.2.0" } }
+]

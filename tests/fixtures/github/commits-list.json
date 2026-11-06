@@ -1,0 +1,47 @@
+[
+  {
+    "sha": "f9baa19408004355473b2771c002df94f8a0ba9e",
+    "commit": {
+      "author": {
+        "name": "Rosco Kalis",
+        "email": "roscokalis@gmail.com",
+        "date": "2026-11-05T19:52:30Z"
+      },
+      "message": "fix: fix Etherlink and Citrea event indexing and remove Matchain (#318)"
+    },
+    "author": {
+      "login": "rkalis"
+    },
+    "html_url": "https://github.com/RevokeCash/revoke.cash/commit/f9baa19408004355473b2771c002df94f8a0ba9e"
+  },
+  {
+    "sha": "4775ef5f48187a7b8faae8056396075cb7ec7701",
+    "commit": {
+      "author": {
+        "name": "Rosco Kalis",
+        "email": "roscokalis@gmail.com",
+        "date": "2026-11-03T19:54:16Z"
+      },
+      "message": "fix: split BNB Chain log requests that Alchemy rejects (#317)"
+    },
+    "author": {
+      "login": "rkalis"
+    },
+    "html_url": "https://github.com/RevokeCash/revoke.cash/commit/4775ef5f48187a7b8faae8056396075cb7ec7701"
+  },
+  {
+    "sha": "064caf630183fd6f906824505955544be12aaaae",
+    "commit": {
+      "author": {
+        "name": "Hey Research Lab",
+        "email": "hi@heyresearch.xyz",
+        "date": "2026-11-03T19:16:51Z"
+      },
+      "message": "fix: keep multicall3 in exploit stats for genesis predeploys (#311)"
+    },
+    "author": {
+      "login": "hey-research-lab"
+    },
+    "html_url": "https://github.com/RevokeCash/revoke.cash/commit/064caf630183fd6f906824505955544be12aaaae"
+  }
+]

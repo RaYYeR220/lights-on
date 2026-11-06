@@ -1,0 +1,12 @@
+{
+  "status": "ahead",
+  "ahead_by": 2,
+  "commits": [
+    { "sha": "dddd000000000000000000000000000000000004", "commit": { "author": { "name": "A", "date": "2026-11-04T10:00:00Z" }, "message": "update stuff" }, "author": { "login": "a" } },
+    { "sha": "eeee000000000000000000000000000000000005", "commit": { "author": { "name": "A", "date": "2026-11-04T11:00:00Z" }, "message": "more stuff" }, "author": { "login": "a" } }
+  ],
+  "files": [
+    { "filename": "README.md", "additions": 3, "deletions": 1 },
+    { "filename": "docs/guide.md", "additions": 9, "deletions": 0 }
+  ]
+}
