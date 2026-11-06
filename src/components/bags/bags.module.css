@@ -1,0 +1,104 @@
+.form {
+  position: relative;
+  width: 340px;
+  max-width: 100%;
+  animation: widen 0.38s var(--ease) both;
+}
+.page {
+  width: min(460px, 100%);
+  animation: none;
+}
+@keyframes widen {
+  from {
+    width: 158px;
+    opacity: 0.6;
+  }
+}
+.field {
+  display: flex;
+  align-items: center;
+  height: 46px;
+  padding: 0 4px 0 16px;
+  border-radius: var(--r-btn);
+  background: rgba(238, 242, 248, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(238, 242, 248, 0.24);
+  transition: box-shadow 0.2s var(--ease), background-color 0.2s var(--ease);
+}
+.field:focus-within {
+  background: rgba(238, 242, 248, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(198, 214, 240, 0.7);
+}
+.field[data-invalid] {
+  box-shadow: inset 0 0 0 1px rgba(255, 106, 106, 0.7);
+}
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 14px/1 var(--mono);
+  letter-spacing: 0;
+}
+.input::placeholder {
+  color: var(--ink-3);
+}
+.input:focus-visible {
+  outline: 0;
+}
+.go {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--ink);
+  color: #0f1622;
+  cursor: pointer;
+  transition: background-color 0.2s var(--ease);
+}
+.go:hover {
+  background: #fff;
+}
+.go:focus-visible {
+  border-radius: 9px;
+}
+.err {
+  margin: 8px 0 0;
+  font: 400 12px/1.45 var(--body);
+  color: #ffb3b3;
+  text-align: left;
+}
+.err[hidden] {
+  display: none;
+}
+/* in the hero the message hangs under the field so the proof line does not move */
+.form:not(.page) .err {
+  position: absolute;
+  left: 2px;
+  right: 0;
+  top: 100%;
+}
+
+@media (max-width: 640px) {
+  .form {
+    width: 100%;
+    animation: none;
+  }
+  .field {
+    height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .form {
+    animation: none;
+  }
+  .field,
+  .go {
+    transition: none;
+  }
+}

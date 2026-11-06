@@ -1,0 +1,120 @@
+.hero {
+  position: relative;
+}
+.copy {
+  position: relative;
+  z-index: 2;
+  min-height: calc(100vh - var(--tower-peek, 220px));
+  min-height: calc(100svh - var(--tower-peek, 220px));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  padding: 96px 16px 12px;
+}
+.h1 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: clamp(42px, 6.667vw, 100px);
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  margin: 0 auto;
+  max-width: 12.5em;
+  text-wrap: balance;
+  font-feature-settings: "ss01" 0;
+}
+.sub {
+  margin: 28px auto 0;
+  max-width: 40em;
+  width: min(640px, 100%);
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.ctas {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 38px;
+  flex-wrap: wrap;
+}
+.proof {
+  margin: 32px auto 0;
+  font: 400 12px/1.6 var(--mono);
+  color: var(--ink-3);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 16px;
+}
+.proof b {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.nw {
+  white-space: nowrap;
+}
+.inline :global(.sw) {
+  vertical-align: -1px;
+  margin-right: 6px;
+}
+.legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 14px;
+  align-items: center;
+  padding-left: 16px;
+  box-shadow: inset 1px 0 0 var(--hair-2);
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.down {
+  padding: 24px 16px 64px;
+  text-align: center;
+  font: 400 12px/1.6 var(--mono);
+  color: var(--ink-3);
+}
+
+@media (max-width: 640px) {
+  .copy {
+    padding-top: 104px;
+    padding-bottom: 30px;
+  }
+  .h1 br {
+    display: none;
+  }
+  .sub {
+    font-size: 15.5px;
+    margin-top: 22px;
+  }
+  .ctas {
+    margin-top: 28px;
+  }
+  .ctas > :global(.btn) {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 12px;
+    font-size: 14px;
+    height: 44px;
+  }
+  .ctas[data-open] > :global(.btn) {
+    flex-basis: 100%;
+  }
+  .proof {
+    font-size: 11px;
+    gap: 6px 12px;
+    margin-top: 24px;
+  }
+  .legend {
+    padding-left: 0;
+    box-shadow: none;
+    gap: 6px 12px;
+  }
+}
