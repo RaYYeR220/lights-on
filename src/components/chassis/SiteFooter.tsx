@@ -10,6 +10,7 @@ export function SiteFooter() {
           Lights On
         </Link>
         <nav aria-label="Footer">
+          <Link href="/study">Study</Link>
           <Link href="/methodology">Methodology</Link>
           <Link href="/docs">Docs</Link>
           <Link href="/docs#api">API</Link>

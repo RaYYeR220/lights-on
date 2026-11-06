@@ -1,16 +1,24 @@
 import { RULES_TEXT } from '@/lib/shift/rules';
 import { ROOT_SCHEMA, SCHEMA, rootSchemaUid, schemaUid } from '@/lib/attest/eas';
 import { siteUrl } from '@/lib/site';
+import { getStudyView } from '@/lib/views/study';
 
 export const dynamic = 'force-dynamic';
 
 export function GET(): Response {
   const site = siteUrl();
+  const study = getStudyView();
   const body = `# Lights On
 
 > Lights On is a nightly check on whether teams are still shipping. Every night a watcher looks at each project's public repo, live app and onchain activity, decides a status with fixed rules, and attests it on Base with EAS. AI can explain a night afterwards; it never decides the status.
 
 Site: ${site}
+
+## Why it exists: the study
+
+${study.headline} ${study.contrast}
+Basis: ${study.basis}, nights ${study.window30From} to ${study.latestNight}. Quiet means no verified change seen, nothing more.
+Full study (Vibeathon 01 finalists, commit graphs vs shipping, method): ${site}/study
 
 ## Statuses
 

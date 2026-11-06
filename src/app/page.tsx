@@ -5,6 +5,8 @@ import { HeroCtas } from "@/components/bags/HeroCtas";
 import { Tower } from "@/components/tower/Tower";
 import { TowerPrePaint } from "@/components/tower/PrePaint";
 import { dayLabel, toTowerModel } from "@/components/tower/model";
+import { StudyStrip } from "@/components/study/StudyStrip";
+import { getStudyView } from "@/lib/views/study";
 import s from "./home.module.css";
 
 /** ISR: the building is rebuilt from the DB at most every 5 minutes. */
@@ -104,6 +106,7 @@ export default async function Home() {
         </div>
         {model ? <Tower model={model} /> : <p className={s.down}>The building could not be loaded. It is rebuilt every 5 minutes, so try again shortly.</p>}
       </section>
+      <StudyStrip view={getStudyView()} />
     </main>
   );
 }

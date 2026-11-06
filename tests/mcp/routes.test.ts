@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { resetApiCache } from '@/lib/apiCache';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import path from 'node:path';
+import headlineJson from '../../results/headline.json';
 import { getDb } from '@/lib/db';
 import { insertNight, upsertProject } from '@/lib/db/queries';
 import { GET as projectsGET } from '@/app/api/v1/projects/route';
@@ -80,6 +81,10 @@ describe('static surfaces', () => {
     const t = await r.text();
     expect(t).toContain('https://lights.test/api/mcp');
     expect(t).toContain('Precedence is shipped');
+    // the study, with its sentences from results/headline.json
+    expect(t).toContain('https://lights.test/study');
+    expect(t).toContain(headlineJson.candidates.find((c) => c.id === 'hackathon-quiet')!.text);
+    expect(t).toContain(headlineJson.basis);
   });
 
   it('agent-registration.json follows ERC-8004 and omits agentId when unset', async () => {

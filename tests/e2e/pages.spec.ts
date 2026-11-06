@@ -181,7 +181,7 @@ test.describe("reference pages", () => {
     await expect(page.getByText("Community-added projects are unlisted")).toBeVisible();
   });
 
-  for (const path of ["/p/revoke-cash", "/night", `/b/${BACKER}`, "/methodology", "/docs", "/add"]) {
+  for (const path of ["/p/revoke-cash", "/night", `/b/${BACKER}`, "/methodology", "/study", "/docs", "/add"]) {
     test(`${path} has no horizontal scroll at 375px`, async ({ page }) => {
       await page.setViewportSize({ width: 375, height: 812 });
       await page.goto(path);
