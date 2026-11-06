@@ -1,0 +1,85 @@
+{
+  "items": [
+    {
+      "hash": "0x01",
+      "timestamp": "2026-11-06T06:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000a1",
+        "is_contract": false
+      },
+      "to": {
+        "hash": "0xce58d80d32ce44769bdcfcbf1227599ed126ee79",
+        "is_contract": true
+      },
+      "created_contract": null,
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    },
+    {
+      "hash": "0x02",
+      "timestamp": "2026-11-06T03:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000a1",
+        "is_contract": false
+      },
+      "to": {
+        "hash": "0xce58d80d32ce44769bdcfcbf1227599ed126ee79",
+        "is_contract": true
+      },
+      "created_contract": null,
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    },
+    {
+      "hash": "0x03",
+      "timestamp": "2026-11-06T01:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000b2",
+        "is_contract": false
+      },
+      "to": {
+        "hash": "0xce58d80d32ce44769bdcfcbf1227599ed126ee79",
+        "is_contract": true
+      },
+      "created_contract": null,
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    },
+    {
+      "hash": "0x04",
+      "timestamp": "2026-11-05T20:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000a1",
+        "is_contract": false
+      },
+      "to": {
+        "hash": "0xce58d80d32ce44769bdcfcbf1227599ed126ee79",
+        "is_contract": true
+      },
+      "created_contract": null,
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    },
+    {
+      "hash": "0x05",
+      "timestamp": "2026-11-05T04:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000c3",
+        "is_contract": false
+      },
+      "to": {
+        "hash": "0xce58d80d32ce44769bdcfcbf1227599ed126ee79",
+        "is_contract": true
+      },
+      "created_contract": null,
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    }
+  ],
+  "next_page_params": null
+}

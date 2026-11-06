@@ -1,0 +1,53 @@
+{
+  "items": [
+    {
+      "hash": "0xd1",
+      "timestamp": "2026-11-06T02:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000de",
+        "is_contract": false
+      },
+      "to": null,
+      "created_contract": {
+        "hash": "0x0000000000000000000000000000000000009001",
+        "is_contract": true
+      },
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    },
+    {
+      "hash": "0xd2",
+      "timestamp": "2026-11-06T01:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000de",
+        "is_contract": false
+      },
+      "to": {
+        "hash": "0xce58d80d32ce44769bdcfcbf1227599ed126ee79",
+        "is_contract": true
+      },
+      "created_contract": null,
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    },
+    {
+      "hash": "0xd3",
+      "timestamp": "2026-11-05T01:00:00.000000Z",
+      "from": {
+        "hash": "0x00000000000000000000000000000000000000de",
+        "is_contract": false
+      },
+      "to": null,
+      "created_contract": {
+        "hash": "0x0000000000000000000000000000000000009002",
+        "is_contract": true
+      },
+      "block_number": 1,
+      "status": "ok",
+      "method": null
+    }
+  ],
+  "next_page_params": null
+}
