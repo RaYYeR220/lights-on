@@ -1,11 +1,12 @@
-import type { Address, Hex, PublicClient } from 'viem';
+import type { Address, Hex } from 'viem';
+import type { AnyPublicClient } from './signer';
 import { hashEvidence } from '@/lib/shift/evidence';
 import type { EvidenceBundle } from '@/lib/types';
 import { EAS_ADDRESS, easAbi } from './abi';
 import { decodeNight } from './eas';
 
 export async function verifyNight(
-  uid: Hex, bundle: EvidenceBundle, client: PublicClient,
+  uid: Hex, bundle: EvidenceBundle, client: AnyPublicClient,
 ): Promise<{ match: boolean; onchainHash: Hex; localHash: Hex; attester: Address }> {
   const a = await client.readContract({ address: EAS_ADDRESS, abi: easAbi, functionName: 'getAttestation', args: [uid] });
   if (a.uid === '0x' + '00'.repeat(32)) throw new Error('attestation_not_found');

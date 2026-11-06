@@ -1,9 +1,10 @@
 import {
   decodeAbiParameters, encodeAbiParameters, encodePacked, keccak256, parseEventLogs, parseAbiParameters, zeroAddress,
-  type Account, type Address, type Chain, type Hex, type PublicClient, type Transport, type WalletClient,
+  type Account, type Address, type Chain, type Hex, type Transport, type WalletClient,
 } from 'viem';
 import { safeErrorCode } from '@/lib/net/redact';
 import { EAS_ADDRESS, easAbi } from './abi';
+import type { AnyPublicClient } from './signer';
 
 export const SCHEMA =
   'bytes32 projectKey,uint32 night,uint8 kind,uint8 status,uint16 lit30,bytes32 evidenceHash,uint256 agentId,string evidenceURI';
@@ -17,7 +18,7 @@ export type Skipped = { skipped: 'gas_cap' | 'disabled' | 'error'; error?: strin
 
 export interface AttestDeps {
   wallet: WalletClient<Transport, Chain | undefined, Account> | null;
-  publicClient: PublicClient;
+  publicClient: AnyPublicClient;
   /** Pre-bound by the caller: true = wei reserved against the daily gas cap, false = over cap. */
   budget: (weiAmount: bigint) => Promise<boolean>;
 }

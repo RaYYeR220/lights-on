@@ -15,3 +15,7 @@ export function getWallet(rpcUrl: string, key: string | undefined = process.env.
 export function getPublicClient(rpcUrl: string) {
   return createPublicClient({ chain: base, transport: http(rpcUrl) });
 }
+
+/** viem's chain-specific client types (Base adds OP-stack block/tx shapes) are not assignable to the generic PublicClient. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyPublicClient = import('viem').PublicClient<import('viem').Transport, any, any>;
