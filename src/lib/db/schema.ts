@@ -49,6 +49,10 @@ export const shifts = pgTable('shifts', {
   attestTx: text('attest_tx'),
   gasUsed: numeric('gas_used', { mode: 'string' }),
   status: text('status').notNull().default('running'),
+  /** Per-shift caps (LLM tokens, GitHub REST calls); the per-day caps live in `budget`. */
+  llmTokens: numeric('llm_tokens', { mode: 'string' }).notNull().default('0'),
+  githubCalls: integer('github_calls').notNull().default(0),
+  notes: text('notes'),
 }, (t) => [
   check('shifts_kind_chk', inList('kind', SHIFT_KINDS)),
   uniqueIndex('shifts_nightly_night_uq').on(t.kind, t.night).where(sql`${t.kind} = 'nightly'`),
@@ -66,6 +70,7 @@ export const nights = pgTable('nights', {
   notable: jsonb('notable').$type<unknown[]>(),
   evidenceHash: text('evidence_hash'),
   attestationUid: text('attestation_uid'),
+  attestTx: text('attest_tx'),
   attestClaimedAt: tsz('attest_claimed_at'),
   aiModel: text('ai_model'),
   aiOk: boolean('ai_ok').notNull().default(false),
