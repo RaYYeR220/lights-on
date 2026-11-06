@@ -6,6 +6,7 @@ import { Tower } from "@/components/tower/Tower";
 import { TowerPrePaint } from "@/components/tower/PrePaint";
 import { dayLabel, toTowerModel } from "@/components/tower/model";
 import { StudyStrip } from "@/components/study/StudyStrip";
+import { LandingSections, raiseOf } from "@/components/landing/LandingSections";
 import { getStudyView } from "@/lib/views/study";
 import s from "./home.module.css";
 
@@ -107,6 +108,7 @@ export default async function Home() {
         {model ? <Tower model={model} /> : <p className={s.down}>The building could not be loaded. It is rebuilt every 5 minutes, so try again shortly.</p>}
       </section>
       <StudyStrip view={getStudyView()} />
+      <LandingSections raise={raiseOf(data)} />
     </main>
   );
 }
