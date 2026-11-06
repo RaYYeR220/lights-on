@@ -1,18 +1,15 @@
 import { decodeEventLog, type Hex } from 'viem';
-import type { PublicClient } from 'viem';
 import type { AdapterResult, TimeWindow, TrancheFact, VibestarterFacts } from '@/lib/types';
-import { BLOCKSCOUT_BASE, defaultFetch, fetchBlockscoutPages, type FetchFn } from '@/lib/adapters/chain';
+import { defaultFetch, type FetchFn } from '@/lib/adapters/chain';
+import { getBaseClient, getLogsChunked, windowBlocks, type RpcLike } from '@/lib/adapters/baseRpc';
 import { vibestarterEscrowAbi } from '@/lib/adapters/vibestarterAbi';
 
 const API = 'https://app.vibestarter.xyz';
 
 export interface VibestarterDeps {
   fetch?: FetchFn;
-  /**
-   * Unused. Escrow events are read through the Blockscout v2 REST API instead of eth_getLogs on a public RPC
-   * (public Base RPCs cap log ranges and Base's 200 ms blocks make block-range math fragile). Kept for the brief's signature.
-   */
-  client?: PublicClient;
+  /** Base RPC client (escrow logs); defaults to getBaseClient(). Tests inject a fake. */
+  client?: RpcLike;
   /** Reference time for "challenge window still open". Defaults to window.end. */
   now?: string;
 }
@@ -112,58 +109,43 @@ function mapActivity(raw: unknown, w: TimeWindow): VibestarterFacts['reportedAct
 interface EscrowEvents {
   founderUpdates: VibestarterFacts['founderUpdates'];
   trancheRequests: { tranche: number; at: string }[];
+  challenges: { tranche: number; blockNumber: bigint | null }[];
   calls: number;
+  truncated: boolean;
 }
 
-async function readEscrowEvents(doFetch: FetchFn, escrow: string, w: TimeWindow): Promise<EscrowEvents> {
-  const s = Date.parse(w.start);
-  const e = Date.parse(w.end);
-  const decoded = (l: Rec) => {
-    const topics = Array.isArray(l.topics) ? (l.topics.filter((t) => typeof t === 'string') as Hex[]) : [];
-    if (topics.length === 0 || typeof l.data !== 'string') return null;
+/** FounderUpdate / TrancheRequested / ChallengeRaised on the escrow over the window's exact block range. Throws on RPC failure. */
+async function readEscrowEvents(client: RpcLike, escrow: string, w: TimeWindow): Promise<EscrowEvents> {
+  const range = await windowBlocks(client, w);
+  const out: EscrowEvents = { founderUpdates: [], trancheRequests: [], challenges: [], calls: range.calls, truncated: false };
+  if (range.toBlock < range.fromBlock) return out;
+  const r = await getLogsChunked(client, { address: escrow as Hex, fromBlock: range.fromBlock, toBlock: range.toBlock });
+  out.calls += r.calls;
+  out.truncated = r.truncated;
+  for (const l of r.logs) {
+    if (l.topics.length === 0) continue;
+    let d;
     try {
-      return decodeEventLog({
-        abi: vibestarterEscrowAbi,
-        data: l.data as Hex,
-        topics: topics as [Hex, ...Hex[]],
-      });
+      d = decodeEventLog({ abi: vibestarterEscrowAbi, data: l.data, topics: l.topics as [Hex, ...Hex[]] });
     } catch {
-      return null;
+      continue; // unknown topic
     }
-  };
-  const tsOf = (l: Rec): number | null => {
-    const d = decoded(l);
-    const a = d?.args as unknown as { timestamp?: bigint } | undefined;
-    return a && typeof a.timestamp === 'bigint' ? Number(a.timestamp) * 1000 : null;
-  };
-  const r = await fetchBlockscoutPages(doFetch, `${BLOCKSCOUT_BASE}/addresses/${escrow}/logs`, (items) =>
-    items.some((l) => {
-      const t = tsOf(l);
-      return t !== null && t < s;
-    }),
-  );
-  const founderUpdates: EscrowEvents['founderUpdates'] = [];
-  const trancheRequests: EscrowEvents['trancheRequests'] = [];
-  for (const l of r.items) {
-    const d = decoded(l);
-    if (!d) continue;
-    const t = tsOf(l);
-    if (t === null || t < s || t >= e) continue;
-    const at = new Date(t).toISOString();
     if (d.eventName === 'FounderUpdate') {
-      founderUpdates.push({ cid: (d.args as { ipfsCid: string }).ipfsCid, at });
+      out.founderUpdates.push({ cid: d.args.ipfsCid, at: new Date(Number(d.args.timestamp) * 1000).toISOString() });
     } else if (d.eventName === 'TrancheRequested') {
-      trancheRequests.push({ tranche: Number((d.args as { tranche: number }).tranche), at });
+      out.trancheRequests.push({ tranche: Number(d.args.tranche), at: new Date(Number(d.args.timestamp) * 1000).toISOString() });
+    } else if (d.eventName === 'ChallengeRaised') {
+      out.challenges.push({ tranche: Number(d.args.tranche), blockNumber: l.blockNumber });
     }
   }
-  founderUpdates.sort((a, b) => a.at.localeCompare(b.at));
-  return { founderUpdates, trancheRequests, calls: r.calls };
+  out.founderUpdates.sort((a, b) => a.at.localeCompare(b.at));
+  return out;
 }
 
 /**
- * Tranche state (REST), founder updates (escrow logs via Blockscout, decoded with the verified ABI) and
- * founder-reported activity (`reportedActivity`: reported-tier data inside a verified result; rules never read it).
- * Never throws.
+ * Tranche state (REST), founder updates and challenges (escrow logs over RPC, exact block range, decoded with the
+ * verified ABI) and founder-reported activity (`reportedActivity`: reported-tier data inside a verified result;
+ * rules never read it). RPC or activity failure keeps the result ok with degraded + a note. Never throws.
  */
 export async function checkVibestarter(
   campaignId: string,
@@ -198,18 +180,36 @@ export async function checkVibestarter(
   let degraded = false;
   const notes: string[] = [];
   let founderUpdates: VibestarterFacts['founderUpdates'] = [];
+  let challengesRaised: NonNullable<VibestarterFacts['challengesRaised']> | undefined;
   try {
-    const ev = await readEscrowEvents(doFetch, escrow, window);
+    const client = deps.client ?? getBaseClient();
+    const ev = await readEscrowEvents(client, escrow, window);
     calls += ev.calls;
     founderUpdates = ev.founderUpdates;
-    // Fill a missing requestedAt from the on-chain TrancheRequested event.
     for (const req of ev.trancheRequests) {
       const t = tranches.find((x) => x.index === req.tranche);
       if (t && t.requestedAt === null) t.requestedAt = req.at;
     }
+    challengesRaised = [];
+    for (const c of ev.challenges.slice(0, 10)) {
+      let at: string | null = null;
+      if (c.blockNumber !== null) {
+        try {
+          const b = await client.getBlock({ blockNumber: c.blockNumber });
+          at = new Date(Number(b.timestamp) * 1000).toISOString();
+        } catch {
+          at = null;
+        }
+      }
+      challengesRaised.push({ tranche: c.tranche, at });
+    }
+    if (ev.truncated) {
+      degraded = true;
+      notes.push('logs_truncated');
+    }
   } catch (e) {
     degraded = true;
-    notes.push(`escrow logs: ${e instanceof Error ? e.message : String(e)}`);
+    notes.push(`rpc_unavailable: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   let reportedActivity: VibestarterFacts['reportedActivity'] = [];
@@ -219,14 +219,16 @@ export async function checkVibestarter(
     calls++;
   } catch {
     calls++;
-    reportedActivity = [];
+    degraded = true;
+    notes.push('activity_unavailable');
   }
 
   return {
     source: 'vibestarter',
     tier: 'verified',
     ok: true,
-    ...(degraded ? { degraded: true, error: notes.join('; ') } : {}),
+    ...(degraded ? { degraded: true } : {}),
+    ...(notes.length ? { error: notes.join('; ') } : {}),
     facts: {
       campaignId,
       raiseStatus: str(campaign.status) ?? 'UNKNOWN',
@@ -234,6 +236,7 @@ export async function checkVibestarter(
       openWindow,
       founderUpdates,
       reportedActivity,
+      ...(challengesRaised ? { challengesRaised } : {}),
     },
     calls,
   };

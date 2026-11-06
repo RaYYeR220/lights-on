@@ -15,9 +15,9 @@ export interface CommitFact { sha: string; author: string; authorIsBot: boolean;
 export interface ReleaseFact { tag: string; name: string|null; date: string; url: string }
 export interface RepoFacts { host: 'github'|'gitlab'; repo: string; branch: string; headSha: string|null; mode: 'api'|'atom'|'git'; commits: CommitFact[]; releases: ReleaseFact[] }
 export interface LiveAppFacts { url: string; finalUrl: string|null; httpStatus: number|null; up: boolean; latencyMs: number|null; deployFingerprint: string|null; textHash: string|null; title: string|null; bytes: number|null; newDeploy: boolean; textDelta: { added: string[]; removed: string[]; changedChars: number }|null }
-export interface ChainFacts { contracts: { chainId: number; address: string; txCount: number; uniqueSenders: number }[]; newDeployments: { address: string; txHash: string; at: string }[]; holderDelta: number|null }
+export interface ChainFacts { contracts: { chainId: number; address: string; txCount: number; uniqueSenders: number | null }[]; newDeployments: { address: string; txHash: string; at: string }[]; holderDelta: number|null }
 export interface TrancheFact { index: number; status: string; requestedAt: string|null; windowEndsAt: string|null; amountPaidWei: string|null }
-export interface VibestarterFacts { campaignId: string; raiseStatus: string; tranches: TrancheFact[]; openWindow: TrancheFact|null; founderUpdates: { cid: string; at: string }[]; reportedActivity: { type: string; summary: string; at: string }[] }
+export interface VibestarterFacts { campaignId: string; raiseStatus: string; tranches: TrancheFact[]; openWindow: TrancheFact|null; founderUpdates: { cid: string; at: string }[]; reportedActivity: { type: string; summary: string; at: string }[]; challengesRaised?: { tranche: number; at: string | null }[] }
 export interface EvidenceBundle { v: 1; rulesVersion: string; project: string; night: number; kind: Kind; window: TimeWindow; sources: { repo: AdapterResult<RepoFacts>|null; liveapp: AdapterResult<LiveAppFacts>|null; chain: AdapterResult<ChainFacts>|null; vibestarter: AdapterResult<VibestarterFacts>|null } }
 export interface Decision { status: Status; reasons: string[] }        // reasons: stable machine strings, e.g. 'liveapp.new_deploy'
 export interface Record30 { streak: number; lit30: number; lastShip: number|null }
