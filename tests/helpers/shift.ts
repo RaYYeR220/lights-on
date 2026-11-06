@@ -52,7 +52,7 @@ export function makeDeps(db: Db, over: Partial<ShiftDeps> = {}) {
   const clock = { now: new Date(NOW) };
   let n = 0;
   /** One root attestation per batch: one uid shared by every row of it. */
-  const attestRoot = vi.fn(async (_r: NightRoot) => ({ uid: uidOf(++n), txHash: TX }));
+  const attestRoot = vi.fn<(r: NightRoot) => Promise<{ uid: Hex; txHash: Hex }>>(async () => ({ uid: uidOf(++n), txHash: TX }));
   const attest = vi.fn(async () => ({ uid: uidOf(10_000 + ++n), txHash: TX }));
   const deps: ShiftDeps = {
     db,

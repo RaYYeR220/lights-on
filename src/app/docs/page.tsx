@@ -33,11 +33,17 @@ const ENDPOINTS: Endpoint[] = [
   },
   {
     path: "GET /api/v1/projects/{slug}/nights?from=yyyymmdd&to=yyyymmdd",
-    text: "A project's nights, observed and reconstructed, each with its reasons, evidence hash and attestation. Default: the last 90 nights; at most 366.",
+    text: "A project's nights, observed and reconstructed, each with its reasons, evidence hash and attestation. An observed night also carries its Merkle proof into that night's root attestation (attestProof, attestLeaf, attestRoot, attestLit30) and the hash of the night manifest. Default: the last 90 nights; at most 366.",
   },
   {
     path: "GET /api/v1/evidence/{hash}",
     text: "The evidence bundle of one night, as canonical JSON: keccak256 of the response body equals the hash. Cached forever (content-addressed); 404 when unknown.",
+  },
+  {
+    path: "GET /api/v1/manifest/{hash}",
+    text: "The night manifest behind a nightly root attestation (its manifestURI), as canonical JSON: every project-night of the root with its slug, status, lit30, evidence hash and leaf. keccak256 of the body equals the hash; cached forever.",
+    shape: `{ v: 1, schema: "lights-on/night-manifest", night, count, root, agentId,
+  leaves: [{ slug, projectKey, night, kind: 0, status, statusCode, lit30, evidenceHash, leaf }] }`,
   },
   {
     path: "GET /api/v1/briefing/{address}",
@@ -60,7 +66,7 @@ const TOOLS = [
   ["list_projects", "every listed project with its latest status; history: true adds the 90-letter history"],
   ["get_project", "one project by slug, with its tranche schedule"],
   ["get_night", "one project's night: status, reasons, evidence hash, attestation"],
-  ["is_still_shipping", "{ slug, status, streak, lit30, lastShip, lastNight, attestationUid }"],
+  ["is_still_shipping", "{ slug, status, streak, lit30, lastShip, lastNight, attestationUid, proof, manifestUri, schemaUid }"],
   ["get_briefing", "the briefing for a wallet address or .eth name"],
   ["watch_project", "ask the agent to watch a project (rate limited)"],
 ] as const;
@@ -148,9 +154,11 @@ export default function DocsPage() {
 cast keccak "$(cat evidence.json)"   # prints <hash>`}</pre>
             <ul>
               <li>
-                <strong>The hash is what was attested.</strong> Read the attestation from EAS on Base (
-                <code>0x4200…0021</code>) and decode its data: the <code>evidenceHash</code> field must equal the hash, the
-                attester must be the watcher, and it must not be revoked.
+                <strong>The hash is what was attested.</strong> Each night is one attestation on EAS on Base (
+                <code>0x4200…0021</code>): a Merkle root of every project&apos;s verdict. Rebuild this night&apos;s leaf from the
+                bundle and the row&apos;s status and lit30, fold in the row&apos;s <code>attestProof</code>, and you must land on
+                the attested root. The attester must be the watcher, and it must not be revoked. Live runs are attested one by
+                one: there the <code>evidenceHash</code> field itself must equal the hash.
               </li>
               <li>
                 <strong>All of it at once</strong> with the repo&apos;s script, or in the browser from any night on a project
@@ -158,7 +166,7 @@ cast keccak "$(cat evidence.json)"   # prints <hash>`}</pre>
               </li>
             </ul>
             <pre className={s.pre}>{`pnpm tsx scripts/verify-night.ts --network base \\
-  --uid <attestation uid> --bundle evidence.json --attester <watcher address>`}</pre>
+  --uid <attestation uid> --bundle evidence.json --site ${site} --attester <watcher address>`}</pre>
             <p>
               The rules that turn evidence into a status are on the <Link className="ul" href="/methodology">methodology</Link>{" "}
               page.

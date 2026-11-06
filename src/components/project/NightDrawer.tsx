@@ -16,21 +16,24 @@ const swatch = (st: StripNight["status"]) =>
 
 export const easscan = (uid: string) => `https://base.easscan.org/attestation/view/${uid}`;
 export const basescanTx = (tx: string) => `https://basescan.org/tx/${tx}`;
+const short = (h: string) => `${h.slice(0, 10)}…${h.slice(-6)}`;
 
 /**
  * The offline check for one night, ready to paste in a clone of the repo: fetch the published bundle, then verify it
- * against the attestation on Base. Null until the night has both an evidence hash and an attestation uid. Without a
- * known watcher address the script falls back to NEXT_PUBLIC_WATCHER_ADDRESS from the environment.
+ * against the attestation on Base (for a nightly root, the script fetches the row's Merkle proof from `--site`). Null
+ * until the night has both an evidence hash and an attestation uid. Without a known watcher address the script falls
+ * back to NEXT_PUBLIC_WATCHER_ADDRESS from the environment.
  */
 export function verifyCommand(p: {
   site: string; slug: string; night: number; uid: string | null; evidenceHash: string | null; watcher: string | null;
 }): string | null {
   if (!p.uid || !p.evidenceHash) return null;
   const file = `evidence-${p.slug}-${p.night}.json`;
+  const site = p.site.replace(/\/+$/, "");
   const attester = p.watcher?.trim() ? ` --attester ${p.watcher.trim()}` : "";
   return [
-    `curl -s ${p.site.replace(/\/+$/, "")}/api/v1/evidence/${p.evidenceHash} -o ${file}`,
-    `pnpm tsx scripts/verify-night.ts --network base --uid ${p.uid} --bundle ${file}${attester}`,
+    `curl -s ${site}/api/v1/evidence/${p.evidenceHash} -o ${file}`,
+    `pnpm tsx scripts/verify-night.ts --network base --uid ${p.uid} --bundle ${file} --site ${site}${attester}`,
   ].join("\n");
 }
 
@@ -120,6 +123,10 @@ function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; 
         uid: n.attestationUid,
         observed: n.observed,
         watcher,
+        status: n.status,
+        lit30: n.attestLit30,
+        proof: n.attestProof,
+        tx: n.attestTx,
       });
       setVerify({ running: false, out });
     } catch {
@@ -242,7 +249,7 @@ function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; 
                     "none recorded"
                   )}
                 </dd>
-                <dt>Attestation</dt>
+                <dt>{n.attestRoot ? "Root attestation" : "Attestation"}</dt>
                 <dd data-testid="attestation-state">
                   {n.attestationUid ? (
                     <a className="ul" href={easscan(n.attestationUid)} target="_blank" rel="noreferrer">
@@ -264,6 +271,25 @@ function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; 
                     </dd>
                   </>
                 ) : null}
+                {n.attestRoot && n.attestProof ? (
+                  <>
+                    <dt>Merkle proof</dt>
+                    <dd data-testid="merkle-proof">
+                      {n.attestProof.length} step{n.attestProof.length === 1 ? "" : "s"} → root <code>{short(n.attestRoot)}</code>
+                      {n.attestTx ? <> attested in tx <code>{short(n.attestTx)}</code></> : null}
+                    </dd>
+                  </>
+                ) : null}
+                {n.manifestHash ? (
+                  <>
+                    <dt>Manifest</dt>
+                    <dd>
+                      <a className="ul" href={`/api/v1/manifest/${n.manifestHash}`} target="_blank" rel="noreferrer">
+                        View night manifest
+                      </a>
+                    </dd>
+                  </>
+                ) : null}
               </dl>
               <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 14 }} onClick={runVerify} disabled={verify.running || ev.state === "loading"}>
                 {verify.running ? "Verifying…" : "Verify in this browser"}
@@ -278,6 +304,7 @@ function DrawerBody({ slug, n, watcher, close }: { slug: string; n: StripNight; 
                       <span>{c.label}</span>
                     </li>
                   ))}
+                  {verify.out.proofLine ? <li className={s.small} data-testid="verify-proof">{verify.out.proofLine}</li> : null}
                   {verify.out.summary ? <li className={s.small}>{verify.out.summary}</li> : null}
                 </ul>
               ) : null}

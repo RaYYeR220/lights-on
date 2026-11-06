@@ -696,7 +696,7 @@ export interface NightDigest {
   /** The headline night: latest observed, else latest reconstructed; null without any row in range. */
   head: {
     night: string; observed: boolean; status: NightRow['status']; summary: string | null; createdAt: Date;
-    evidenceHash: string | null; attestationUid: string | null;
+    evidenceHash: string | null; attestationUid: string | null; attestProof: string[] | null; attestManifest: string | null;
   } | null;
 }
 
@@ -729,7 +729,8 @@ export async function getNightDigests(db: Db, ids: number[], from: string, to: s
     )
     SELECT c.project_id AS "projectId", c.codes, h.night::text AS "headNight", h.observed AS "headObserved",
       n.status AS "headStatus", n.summary AS "headSummary", to_json(n.created_at) #>> '{}' AS "headCreatedAt",
-      n.evidence_hash AS "headEvidenceHash", n.attestation_uid AS "headAttestationUid"
+      n.evidence_hash AS "headEvidenceHash", n.attestation_uid AS "headAttestationUid",
+      n.attest_proof AS "headAttestProof", n.attest_manifest AS "headAttestManifest"
     FROM codes c
     LEFT JOIN head h ON h.project_id = c.project_id
     LEFT JOIN nights n ON n.project_id = h.project_id AND n.night = h.night AND n.observed = h.observed
@@ -737,7 +738,7 @@ export async function getNightDigests(db: Db, ids: number[], from: string, to: s
   type Raw = {
     projectId: number; codes: string | null; headNight: string | null; headObserved: boolean | null;
     headStatus: NightRow['status'] | null; headSummary: string | null; headCreatedAt: string | null;
-    headEvidenceHash: string | null; headAttestationUid: string | null;
+    headEvidenceHash: string | null; headAttestationUid: string | null; headAttestProof: string[] | null; headAttestManifest: string | null;
   };
   return (res as unknown as { rows: Raw[] }).rows.map((r) => ({
     projectId: Number(r.projectId),
@@ -746,6 +747,7 @@ export async function getNightDigests(db: Db, ids: number[], from: string, to: s
       ? {
           night: r.headNight, observed: !!r.headObserved, status: r.headStatus, summary: r.headSummary,
           createdAt: new Date(r.headCreatedAt ?? 0), evidenceHash: r.headEvidenceHash, attestationUid: r.headAttestationUid,
+          attestProof: r.headAttestProof ?? null, attestManifest: r.headAttestManifest ?? null,
         }
       : null,
   }));
@@ -763,6 +765,7 @@ export async function listListedProjectCards(db: Db) {
 export interface LeanNightRow {
   night: string; observed: boolean; status: NightRow['status']; reasons: unknown; summary: string | null;
   evidenceHash: string | null; attestationUid: string | null; attestTx: string | null;
+  attestProof: string[] | null; attestLeaf: string | null; attestRoot: string | null; attestLit30: number | null; attestManifest: string | null;
 }
 
 /** One project's nights in [from, to] with only the fields the open API prints (reasons, not the whole signals). */
@@ -772,6 +775,8 @@ export async function getLeanNights(db: Db, projectId: number, from: string, to:
       night: nights.night, observed: nights.observed, status: nights.status,
       reasons: sql<unknown>`${nights.signals} -> 'reasons'`, summary: nights.summary,
       evidenceHash: nights.evidenceHash, attestationUid: nights.attestationUid, attestTx: nights.attestTx,
+      attestProof: nights.attestProof, attestLeaf: nights.attestLeaf, attestRoot: nights.attestRoot,
+      attestLit30: nights.attestLit30, attestManifest: nights.attestManifest,
     })
     .from(nights)
     .where(and(eq(nights.projectId, projectId), gte(nights.night, from), lte(nights.night, to)))

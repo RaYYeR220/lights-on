@@ -10,7 +10,7 @@ import type { NightRow, ProjectRow } from '@/lib/db/schema';
 import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
 import { safeErrorCode } from '@/lib/net/redact';
 import { validRepo } from '@/lib/adapters/repo';
-import { schemaUid } from '@/lib/attest/eas';
+import { rootSchemaUid } from '@/lib/attest/eas';
 import { checkBriefingLimit } from '@/lib/briefingLimit';
 import { briefingFor, resolveAddressInput } from '@/lib/briefingService';
 import { clientIp, hashIp } from '@/lib/shift/limits';
@@ -77,8 +77,15 @@ async function digests(db: Db, ids: number[], now: Date): Promise<{ from: string
 const reasonList = (r: unknown): string[] => (Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : []);
 
 const evidenceUri = (hash: string | null) => (hash ? `${siteUrl()}/api/v1/evidence/${hash}` : null);
+const manifestUri = (hash: string | null) => (hash ? `${siteUrl()}/api/v1/manifest/${hash}` : null);
 
-type NightFields = Pick<LeanNightRow, 'night' | 'observed' | 'status' | 'summary' | 'evidenceHash' | 'attestationUid' | 'attestTx'>;
+type NightFields = Pick<LeanNightRow,
+  'night' | 'observed' | 'status' | 'summary' | 'evidenceHash' | 'attestationUid' | 'attestTx'
+  | 'attestProof' | 'attestLeaf' | 'attestRoot' | 'attestLit30' | 'attestManifest'>;
+/**
+ * One night. A nightly row's attestationUid is the night's ROOT attestation; attestLeaf / attestProof / attestRoot /
+ * attestLit30 let anyone check this project-night is one of its leaves, and the manifest lists every leaf.
+ */
 function nightView(r: NightFields, reasons: unknown) {
   return {
     night: nightOf(r.night),
@@ -90,6 +97,12 @@ function nightView(r: NightFields, reasons: unknown) {
     evidenceUri: evidenceUri(r.evidenceHash),
     attestationUid: r.attestationUid,
     attestTx: r.attestTx,
+    attestProof: r.attestProof ?? null,
+    attestLeaf: r.attestLeaf ?? null,
+    attestRoot: r.attestRoot ?? null,
+    attestLit30: r.attestLit30 ?? null,
+    manifestHash: r.attestManifest ?? null,
+    manifestUri: manifestUri(r.attestManifest ?? null),
   };
 }
 const fullNightView = (r: NightRow) => nightView(r, (r.signals as { reasons?: unknown } | null)?.reasons);
@@ -203,8 +216,12 @@ export async function isStillShipping(db: Db, slug: string, now: Date = new Date
     lastShip: record.lastShip,
     lastNight: head ? nightOf(head.night) : null,
     attestationUid: head?.attestationUid ?? null,
+    /** Merkle proof of this project-night into the root attestation above (null before it is attested). */
+    proof: head?.attestProof ?? null,
+    manifestUri: manifestUri(head?.attestManifest ?? null),
     verifiedBy: VERIFIED_BY,
-    schemaUid: schemaUid(),
+    /** The nightly root schema: attestationUid is one attestation per night covering every project. */
+    schemaUid: rootSchemaUid(),
   };
 }
 

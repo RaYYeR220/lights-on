@@ -723,7 +723,7 @@ describe('real attestRoot with a local signer (no chain)', () => {
       if (o.sendErr) throw o.sendErr;
       return HASH_OF_SIGNED;
     });
-    const signTransaction = vi.fn(async (_tx: unknown) => { await o.onSign?.(); return SIGNED; });
+    const signTransaction = vi.fn<(tx: unknown) => Promise<Hex>>(async () => { await o.onSign?.(); return SIGNED; });
     const wallet = { account: { address: SENDER }, chain: undefined, signTransaction, sendRawTransaction };
     const publicClient = {
       estimateContractGas: vi.fn(async () => 200_000n),

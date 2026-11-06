@@ -125,9 +125,9 @@ test.describe("night pages", () => {
       await expect(notice).toContainText("05:00 UTC");
       await expect(notice).toContainText("preview");
       await expect(page.getByText("reconstructed: never attested")).toBeVisible();
-      await expect(page.getByText(/multiAttest tx/)).toHaveCount(0);
+      await expect(page.getByText(/root attestation/i)).toHaveCount(0);
     } else {
-      await expect(page.getByText(/multiAttest tx|not attested yet/).first()).toBeVisible();
+      await expect(page.getByText(/root attestation|not attested yet/i).first()).toBeVisible();
     }
   });
 

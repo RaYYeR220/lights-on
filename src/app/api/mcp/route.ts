@@ -51,14 +51,14 @@ const handler = createMcpHandler(
 
     server.registerTool('get_night', {
       title: 'Get night',
-      description: 'One project-night (yyyymmdd): status, reasons, summary, evidence hash and EAS attestation uid.',
+      description: 'One project-night (yyyymmdd): status, reasons, summary, evidence hash, and the EAS root attestation uid with this night\'s Merkle proof into it (attestProof, attestLeaf, attestRoot, attestLit30, manifestHash).',
       inputSchema: z.object({ slug, night: z.number().int().describe('UTC date as yyyymmdd, e.g. 20261105') }),
       annotations: READ_ONLY,
     }, ({ slug: s, night }, ctx) => run(() => cachedRead(`night:${s}:${night}`, headersOf(ctx), async () => getNight(await getDb(), s, night))));
 
     server.registerTool('is_still_shipping', {
       title: 'Is this team still shipping?',
-      description: 'Short answer for one project: latest status, streak, lit nights in the last 30, last ship, and the EAS attestation that backs it.',
+      description: 'Short answer for one project: latest status, streak, lit nights in the last 30, last ship, and the EAS attestation that backs it (one root per night: attestationUid, the Merkle proof of this project-night, the manifest URI and the root schema uid).',
       inputSchema: z.object({ slug }),
       annotations: READ_ONLY,
     }, ({ slug: s }, ctx) => run(() => cachedRead(`shipping:${s}`, headersOf(ctx), async () => isStillShipping(await getDb(), s))));

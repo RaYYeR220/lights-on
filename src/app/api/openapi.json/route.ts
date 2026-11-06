@@ -17,9 +17,13 @@ const record = {
   },
 };
 
+const hex32 = { type: ['string', 'null'], pattern: '^0x[0-9a-f]{64}$' };
 const night = {
   type: 'object',
-  required: ['night', 'observed', 'status', 'reasons', 'summary', 'evidenceHash', 'evidenceUri', 'attestationUid', 'attestTx'],
+  required: [
+    'night', 'observed', 'status', 'reasons', 'summary', 'evidenceHash', 'evidenceUri', 'attestationUid', 'attestTx',
+    'attestProof', 'attestLeaf', 'attestRoot', 'attestLit30', 'manifestHash', 'manifestUri',
+  ],
   properties: {
     night: yyyymmdd,
     observed: { type: 'boolean', description: 'false = reconstructed afterwards from history' },
@@ -28,8 +32,20 @@ const night = {
     summary: { type: ['string', 'null'] },
     evidenceHash: { type: ['string', 'null'] },
     evidenceUri: { type: ['string', 'null'], format: 'uri' },
-    attestationUid: { type: ['string', 'null'], description: 'EAS attestation uid on Base' },
+    attestationUid: {
+      type: ['string', 'null'],
+      description: 'EAS attestation uid on Base. Nightly rows: the night\'s ROOT attestation (one per night, shared by every project-night it covers).',
+    },
     attestTx: { type: ['string', 'null'] },
+    attestProof: {
+      type: ['array', 'null'], items: { type: 'string', pattern: '^0x[0-9a-f]{64}$' },
+      description: 'Merkle proof (sibling hashes, leaf to root, sorted-pair keccak256) of this project-night into attestRoot; empty for a one-leaf root',
+    },
+    attestLeaf: { ...hex32, description: 'keccak256(abi.encode(bytes32 keccak256(slug), uint32 night, uint8 0, uint8 status, uint16 attestLit30, bytes32 evidenceHash))' },
+    attestRoot: { ...hex32, description: 'The Merkle root carried by the root attestation' },
+    attestLit30: { type: ['integer', 'null'], description: 'The lit30 this leaf commits to (the record when it was attested)' },
+    manifestHash: { ...hex32, description: 'keccak256 of the night manifest that lists every leaf of the root' },
+    manifestUri: { type: ['string', 'null'], format: 'uri' },
   },
 };
 
@@ -177,6 +193,41 @@ export function GET(): Response {
                 },
               }),
             },
+            404: errorCodes('not_found'),
+          },
+        },
+      },
+      '/api/v1/manifest/{hash}': {
+        get: {
+          operationId: 'getNightManifest',
+          summary: 'The manifest behind a nightly root attestation',
+          description: 'The exact canonical JSON whose keccak256 is the hash in the root attestation\'s manifestURI: every leaf of the night\'s Merkle root with its slug, status, lit30 and evidence hash. Rebuild the tree from the leaves to get the attested root.',
+          parameters: [{ name: 'hash', in: 'path', required: true, schema: { type: 'string', pattern: '^0x[0-9a-fA-F]{64}$' } }],
+          responses: {
+            200: {
+              description: 'Night manifest (v1)',
+              content: json({
+                type: 'object',
+                required: ['v', 'schema', 'night', 'count', 'leaves', 'root', 'agentId'],
+                properties: {
+                  v: { const: 1 }, schema: { const: 'lights-on/night-manifest' }, night: yyyymmdd, count: { type: 'integer' },
+                  root: { type: 'string' }, agentId: { type: 'string', description: 'ERC-8004 agent id, decimal' },
+                  leaves: {
+                    type: 'array',
+                    description: 'Sorted ascending by leaf',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        slug: { type: 'string' }, projectKey: { type: 'string' }, night: yyyymmdd, kind: { const: 0 }, status,
+                        statusCode: { type: 'integer', minimum: 1, maximum: 5 }, lit30: { type: 'integer' },
+                        evidenceHash: { type: 'string' }, leaf: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              }),
+            },
+            400: errorCodes('invalid_hash'),
             404: errorCodes('not_found'),
           },
         },

@@ -21,6 +21,10 @@ const NOW = new Date('2026-11-06T12:00:00Z');
 const TXA = `0x${'aa'.repeat(32)}`;
 const TXB = `0x${'bb'.repeat(32)}`;
 const TXC = `0x${'cc'.repeat(32)}`;
+const UID = `0x${'0d'.repeat(32)}`;
+const ROOT = `0x${'0e'.repeat(32)}`;
+const MANIFEST = `0x${'0f'.repeat(32)}`;
+const P1 = `0x${'01'.repeat(32)}`;
 
 describe('reasons', () => {
   it('every reason code the rules emit has plain words', () => {
@@ -56,15 +60,18 @@ describe('getProjectView', () => {
   it('builds the 90-night strip with observed rows first and reconstructed provenance', async () => {
     const p = await upsertProject(db, { slug: 'rc', name: 'RC', source: 'base', repo: 'o/r', repoHost: 'github', liveUrl: 'https://rc.example' });
     await insertNight(db, { projectId: p.id, night: '2026-11-06', status: 'building', observed: false, signals: { source: 'git', reasons: ['repo.code_commits'] } });
-    await insertNight(db, { projectId: p.id, night: '2026-11-06', status: 'shipped', observed: true, summary: 'Shipped a new <b>swap</b> page.', aiModel: 'm', signals: { reasons: ['liveapp.new_deploy'] }, attestationUid: '0xuid', attestTx: '0xtx' });
+    await insertNight(db, { projectId: p.id, night: '2026-11-06', status: 'shipped', observed: true, summary: 'Shipped a new <b>swap</b> page.', aiModel: 'm', signals: { reasons: ['liveapp.new_deploy'] }, attestationUid: '0xuid', attestTx: '0xtx', attestProof: [P1], attestRoot: ROOT, attestLeaf: P1, attestLit30: 2, attestManifest: MANIFEST });
     await insertNight(db, { projectId: p.id, night: '2026-11-05', status: 'shipped', observed: false, signals: { source: 'git+wayback', note: 'deploy between a and b', reasons: ['liveapp.new_deploy'] } });
     const v = (await getProjectView(db, 'rc', { now: NOW }))!;
     expect(v.strip).toHaveLength(90);
     const last = v.strip[89];
     expect(last).toMatchObject({ night: 20261106, status: 'shipped', observed: true, alsoReconstructed: true, attestationUid: '0xuid', attestTx: '0xtx', reasons: ['liveapp.new_deploy'] });
     expect(last.summary).toBe('Shipped a new swap page.');
+    // what the drawer's in-browser verify needs for the night's Merkle proof
+    expect(last).toMatchObject({ attestProof: [P1], attestRoot: ROOT, attestLit30: 2, manifestHash: MANIFEST });
     const prev = v.strip[88];
     expect(prev).toMatchObject({ status: 'shipped', observed: false, reconstructedFrom: 'git+wayback', note: 'deploy between a and b', attestationUid: null });
+    expect(prev).toMatchObject({ attestProof: null, attestRoot: null, attestLit30: null, manifestHash: null });
     expect(v.strip[0].status).toBeNull();
     expect(v).toMatchObject({ status: 'shipped', statusObserved: true, statusNight: 20261106, streak: 2, lit30: 2, reconstructedNights: 1, repoUrl: 'https://github.com/o/r' });
     expect(v.vibestarterFacts).toBeNull();
@@ -164,7 +171,26 @@ describe('getNightView', () => {
     expect(old.prev).toBeNull();
     expect(old.next).toBe(20261106);
   });
-  it('a shift with several multiAttest batches: one tx per link, never a joined string', async () => {
+  it('a night attested as one Merkle root: its single tx, the root uid and the night manifest link', async () => {
+    const a = await upsertProject(db, { slug: 'a', name: 'A', source: 'base' });
+    const b = await upsertProject(db, { slug: 'b', name: 'B', source: 'base' });
+    const { shift } = await createNightlyShift(db, { night: '2026-11-06', startedAt: new Date('2026-11-06T05:00:00Z'), planned: 2 });
+    const root = { attestTx: TXA, attestationUid: UID, attestRoot: ROOT, attestManifest: MANIFEST, attestLeaf: P1, attestProof: [P1], attestLit30: 1 };
+    await insertNight(db, { projectId: a.id, night: '2026-11-06', status: 'quiet', observed: true, shiftId: shift.id, ...root });
+    await insertNight(db, { projectId: b.id, night: '2026-11-06', status: 'shipped', observed: true, shiftId: shift.id, ...root });
+    await appendShiftTxs(db, shift.id, [TXA]);
+    const v = await getNightView(db);
+    expect(v.txs).toEqual([TXA]);
+    expect(v.attestations).toEqual([{ tx: TXA, uid: UID, root: ROOT, manifest: MANIFEST, count: 2 }]);
+    const html = renderToStaticMarkup(createElement(NightShift, { view: v, asked: null, now: NOW.getTime() }));
+    expect([...html.matchAll(/href="https:\/\/basescan\.org\/tx\/([^"]+)"/g)].map((m) => m[1])).toEqual([TXA]);
+    expect(html).toContain(`href="/api/v1/manifest/${MANIFEST}"`);
+    expect(html).toContain('View night manifest');
+    expect(html).toContain('One root attestation for 2 projects');
+    expect(html).not.toContain('multiAttest');
+  });
+
+  it('a shift with several root batches: one tx per link, never a joined string', async () => {
     const ps = [];
     for (const slug of ['a', 'b', 'c']) ps.push(await upsertProject(db, { slug, name: slug.toUpperCase(), source: 'base' }));
     const { shift } = await createNightlyShift(db, { night: '2026-11-06', startedAt: new Date('2026-11-06T05:00:00Z'), planned: 3 });

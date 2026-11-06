@@ -48,6 +48,11 @@
   font: 400 12px/1.6 var(--mono);
   color: var(--ink-3);
 }
+.root {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
 .sec {
   margin-top: 56px;
 }

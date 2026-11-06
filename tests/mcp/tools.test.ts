@@ -6,7 +6,8 @@ import {
   ToolError, getBriefing, listProjects, getProject, getNight, getProjectNights, isStillShipping, watchProject, parseRepoInput,
   resetWatchLimit, type WatchCtx,
 } from '@/lib/mcp/tools';
-import { schemaUid } from '@/lib/attest/eas';
+import { rootSchemaUid } from '@/lib/attest/eas';
+import { siteUrl } from '@/lib/site';
 
 const NOW = new Date('2026-11-06T12:00:00Z');
 let db: Db;
@@ -18,13 +19,19 @@ beforeEach(async () => {
 });
 afterEach(() => { process.env = { ...saved }; });
 
+const P1 = `0x${'1'.repeat(64)}`;
+const LEAF = `0x${'2'.repeat(64)}`;
+const ROOT = `0x${'3'.repeat(64)}`;
+const MANIFEST = `0x${'4'.repeat(64)}`;
+const ROOT_FIELDS = { attestProof: [P1], attestLeaf: LEAF, attestRoot: ROOT, attestLit30: 2, attestManifest: MANIFEST };
+
 const night = (projectId: number, n: string, status: 'shipped' | 'building' | 'quiet' | 'down' | 'unavailable', extra: Record<string, unknown> = {}) =>
   insertNight(db, { projectId, night: n, status, observed: true, signals: { reasons: ['liveapp.new_deploy'] }, summary: `sum ${n}`, ...extra });
 
 async function seed() {
   const a = await upsertProject(db, { slug: 'revoke-cash', name: 'Revoke Cash', tagline: 'tl', source: 'base' });
   await night(a.id, '2026-11-04', 'building');
-  await night(a.id, '2026-11-05', 'shipped', { evidenceHash: '0xabc', attestationUid: '0xuid', attestTx: '0xtx' });
+  await night(a.id, '2026-11-05', 'shipped', { evidenceHash: '0xabc', attestationUid: '0xuid', attestTx: '0xtx', ...ROOT_FIELDS });
   const r = await upsertProject(db, { slug: 'recon', name: 'Recon', source: 'vibeathon01' });
   await insertNight(db, { projectId: r.id, night: '2026-11-05', status: 'quiet', observed: false, signals: { reconstructed: true, reasons: ['none'] } });
   await upsertProject(db, { slug: 'secret', name: 'Secret', source: 'community', hidden: true });
@@ -48,7 +55,8 @@ describe('read tools', () => {
     const r = await isStillShipping(db, 'revoke-cash', NOW);
     expect(r).toEqual({
       slug: 'revoke-cash', status: 'shipped', streak: 2, lit30: 2, lastShip: 20261105, lastNight: 20261105,
-      attestationUid: '0xuid', verifiedBy: 'EAS on Base', schemaUid: schemaUid(),
+      attestationUid: '0xuid', proof: [P1], manifestUri: `${siteUrl()}/api/v1/manifest/${MANIFEST}`,
+      verifiedBy: 'EAS on Base', schemaUid: rootSchemaUid(),
     });
   });
 
@@ -104,6 +112,13 @@ describe('read tools', () => {
     const ns = await getProjectNights(db, 'revoke-cash', {}, NOW);
     expect(ns.nights.map((x) => x.night)).toEqual([20261104, 20261105]);
     expect(ns.nights[1]).toMatchObject({ evidenceHash: '0xabc', attestTx: '0xtx', observed: true });
+    // nightly rows carry their Merkle proof into the night's root attestation; rows without one say null
+    expect(ns.nights[1]).toMatchObject({
+      attestProof: [P1], attestLeaf: LEAF, attestRoot: ROOT, attestLit30: 2, manifestHash: MANIFEST,
+      manifestUri: `${siteUrl()}/api/v1/manifest/${MANIFEST}`,
+    });
+    expect(ns.nights[0]).toMatchObject({ attestProof: null, attestLeaf: null, attestRoot: null, attestLit30: null, manifestHash: null, manifestUri: null });
+    expect(await getNight(db, 'revoke-cash', 20261105)).toMatchObject({ attestProof: [P1], attestRoot: ROOT, manifestHash: MANIFEST });
     const ranged = await getProjectNights(db, 'revoke-cash', { from: 20261105, to: 20261105 }, NOW);
     expect(ranged.nights).toHaveLength(1);
     await expect(getProjectNights(db, 'revoke-cash', { from: 20261106, to: 20261101 }, NOW)).rejects.toMatchObject({ code: 'bad_request' });

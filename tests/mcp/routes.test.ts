@@ -69,7 +69,7 @@ describe('static surfaces', () => {
     const spec = await body(openapiGET());
     expect(spec.openapi).toBe('3.1.0');
     expect(Object.keys(spec.paths).sort()).toEqual([
-      '/api/v1/briefing/{address}', '/api/v1/evidence/{hash}', '/api/v1/projects', '/api/v1/projects/{slug}',
+      '/api/v1/briefing/{address}', '/api/v1/evidence/{hash}', '/api/v1/manifest/{hash}', '/api/v1/projects', '/api/v1/projects/{slug}',
       '/api/v1/projects/{slug}/nights', '/api/v1/watch',
     ]);
   });

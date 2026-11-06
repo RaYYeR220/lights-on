@@ -5,7 +5,7 @@ import { ProjectEyebrow } from '@/components/project/ProjectEyebrow';
 import { validateWatch } from '@/components/add/WatchForm';
 import { CLAIM_ERRORS } from '@/components/claim/messages';
 import { trancheKind } from '@/components/project/Tranches';
-import { verifyCommand } from '@/components/project/NightDrawer';
+import { NightDrawer, verifyCommand } from '@/components/project/NightDrawer';
 
 describe('ProjectEyebrow', () => {
   it('labels a community-added project as unverified instead of its source', () => {
@@ -30,11 +30,11 @@ describe('NightDrawer offline check', () => {
     const cmd = verifyCommand({ site: 'https://lights-on-watch.vercel.app/', slug: 'corvo-edge', night: 20261106, uid, evidenceHash: hash, watcher })!;
     const [fetchLine, verifyLine] = cmd.split(String.fromCharCode(10));
     expect(fetchLine).toBe(`curl -s https://lights-on-watch.vercel.app/api/v1/evidence/${hash} -o evidence-corvo-edge-20261106.json`);
-    expect(verifyLine).toBe(`pnpm tsx scripts/verify-night.ts --network base --uid ${uid} --bundle evidence-corvo-edge-20261106.json --attester ${watcher}`);
-    // every flag verify-night.ts requires is present with a value
+    expect(verifyLine).toBe(`pnpm tsx scripts/verify-night.ts --network base --uid ${uid} --bundle evidence-corvo-edge-20261106.json --site https://lights-on-watch.vercel.app --attester ${watcher}`);
+    // every flag verify-night.ts uses is present with a value (--site: where the row's Merkle proof is read)
     const argv = verifyLine.split(' ');
     const val = (f: string) => argv[argv.indexOf(`--${f}`) + 1];
-    expect([val('network'), val('uid'), val('bundle'), val('attester')]).toEqual(['base', uid, 'evidence-corvo-edge-20261106.json', watcher]);
+    expect([val('network'), val('uid'), val('bundle'), val('site'), val('attester')]).toEqual(['base', uid, 'evidence-corvo-edge-20261106.json', 'https://lights-on-watch.vercel.app', watcher]);
     expect(cmd).not.toMatch(/[<>]/);
   });
   it('falls back to the env default without a known watcher, and needs an attestation', () => {
@@ -43,6 +43,30 @@ describe('NightDrawer offline check', () => {
     expect(cmd).toContain('--network base');
     expect(verifyCommand({ site: 'https://x.example', slug: 's', night: 20261106, uid: null, evidenceHash: hash, watcher })).toBeNull();
     expect(verifyCommand({ site: 'https://x.example', slug: 's', night: 20261106, uid, evidenceHash: null, watcher })).toBeNull();
+  });
+});
+
+describe('NightDrawer proof section', () => {
+  const P = (b: string) => `0x${b.repeat(32)}`;
+  const night = {
+    night: 20261106, status: 'shipped' as const, observed: true, alsoReconstructed: false, summary: null, templateSummary: null,
+    notable: [], reasons: ['liveapp.new_deploy'], evidenceHash: P('0b'), attestationUid: P('0c'), attestTx: P('0d'),
+    attestProof: [P('01'), P('02'), P('03')], attestRoot: P('0e'), attestLit30: 4, manifestHash: P('0f'),
+    reconstructedFrom: null, note: null, founderNotes: [],
+  };
+  it('names the root attestation, the proof length and the root, and links the night manifest', () => {
+    const html = renderToStaticMarkup(createElement(NightDrawer, { slug: 'rc', night, watcher: null, onClose: () => undefined }));
+    expect(html).toContain('Root attestation');
+    expect(html).toContain(`3 steps → root <code>${P('0e').slice(0, 10)}…${P('0e').slice(-6)}</code>`);
+    expect(html).toContain(`attested in tx <code>${P('0d').slice(0, 10)}…${P('0d').slice(-6)}</code>`);
+    expect(html).toContain(`href="/api/v1/manifest/${P('0f')}"`);
+    expect(html).toContain('View night manifest');
+  });
+  it('a reconstructed night shows neither', () => {
+    const rec = { ...night, observed: false, attestationUid: null, attestTx: null, attestProof: null, attestRoot: null, attestLit30: null, manifestHash: null };
+    const html = renderToStaticMarkup(createElement(NightDrawer, { slug: 'rc', night: rec, watcher: null, onClose: () => undefined }));
+    expect(html).not.toContain('Merkle proof');
+    expect(html).not.toContain('View night manifest');
   });
 });
 

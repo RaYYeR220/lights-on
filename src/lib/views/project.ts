@@ -22,8 +22,14 @@ export interface StripNight {
   notable: string[];
   reasons: string[];
   evidenceHash: string | null;
+  /** Nightly rows: the uid of the night's ROOT attestation (one per night, shared by every project-night in it). */
   attestationUid: string | null;
   attestTx: string | null;
+  /** This night's Merkle proof into that root, the root, the lit30 its leaf commits to, and the night manifest hash. */
+  attestProof: string[] | null;
+  attestRoot: string | null;
+  attestLit30: number | null;
+  manifestHash: string | null;
   /** Reconstruction source ('git', 'wayback', 'git+wayback') and the Wayback capture note, when reconstructed. */
   reconstructedFrom: string | null;
   note: string | null;
@@ -80,6 +86,10 @@ function stripNight(night: number, obs: NightRow | undefined, rec: NightRow | un
     evidenceHash: row?.evidenceHash ?? null,
     attestationUid: obs?.attestationUid ?? null,
     attestTx: obs?.attestTx ?? null,
+    attestProof: obs?.attestProof ?? null,
+    attestRoot: obs?.attestRoot ?? null,
+    attestLit30: obs?.attestLit30 ?? null,
+    manifestHash: obs?.attestManifest ?? null,
     reconstructedFrom: !obs && typeof signals.source === 'string' ? signals.source : null,
     note: !obs && typeof signals.note === 'string' ? signals.note : null,
     founderNotes: notes,

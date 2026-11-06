@@ -34,14 +34,21 @@ export interface NightView {
   shift: { attestTxs: string[]; startedAt: string; finishedAt: string | null; planned: number; done: number; status: string } | null;
   rows: ShiftRowView[];
   counts: Record<Status, number>;
-  /** Distinct attestation transactions of the shift (the multiAttest batches), one hash each, in send order. */
+  /** Distinct attestation transactions of the shift (one root attestation per batch of up to 500), in send order. */
   txs: string[];
+  /**
+   * One entry per tx (same order): the root attestation's uid and Merkle root, the night manifest that lists its
+   * leaves, and how many project-nights it covers (every observed row carrying that tx, listed or not).
+   */
+  attestations: NightAttestationView[];
   /** Neighbouring observed nights, for navigation. */
   prev: number | null;
   next: number | null;
   /** When the view was built (ms). */
   generatedAt: number;
 }
+
+export interface NightAttestationView { tx: string; uid: string | null; root: string | null; manifest: string | null; count: number }
 
 interface Raw extends WorkRow {
   slug: string;
@@ -52,6 +59,8 @@ interface Raw extends WorkRow {
   evidenceHash: string | null;
   attestationUid: string | null;
   attestTx: string | null;
+  attestRoot: string | null;
+  attestManifest: string | null;
   createdAt: Date | string | null;
 }
 
@@ -74,6 +83,8 @@ async function rowsFor(db: Db, date: string, observed: boolean): Promise<Raw[]> 
       evidenceHash: nights.evidenceHash,
       attestationUid: nights.attestationUid,
       attestTx: nights.attestTx,
+      attestRoot: nights.attestRoot,
+      attestManifest: nights.attestManifest,
       createdAt: nights.createdAt,
     })
     .from(nights)
@@ -98,6 +109,15 @@ export function shiftTxs(shiftTxList: string[] | null, rowTxs: (string | null)[]
     }
   }
   return [...out];
+}
+
+/** Per tx: the root attestation it carries, from every observed row of the night (hidden or community ones included). */
+export function attestationsOf(txs: string[], raw: Pick<Raw, 'attestTx' | 'attestationUid' | 'attestRoot' | 'attestManifest'>[]): NightAttestationView[] {
+  return txs.map((tx) => {
+    const mine = raw.filter((r) => (r.attestTx ?? '').toLowerCase() === tx);
+    const first = mine.find((r) => r.attestationUid) ?? mine[0];
+    return { tx, uid: first?.attestationUid ?? null, root: first?.attestRoot ?? null, manifest: first?.attestManifest ?? null, count: mine.length };
+  });
 }
 
 function view(raw: Raw[]): Pick<NightView, 'rows' | 'counts'> {
@@ -163,7 +183,7 @@ async function buildNightView(db: Db, night?: number): Promise<Omit<NightView, '
       const v = view(raw);
       const txs = shiftTxs(s?.attestTxs ?? null, v.rows.map((r) => r.attestTx));
       return {
-        mode: 'observed', night: target, latestObserved, rows: v.rows, counts: v.counts, txs, ...nav,
+        mode: 'observed', night: target, latestObserved, rows: v.rows, counts: v.counts, txs, attestations: attestationsOf(txs, raw), ...nav,
         shift: s
           ? { attestTxs: shiftTxs(s.attestTxs ?? null, []), startedAt: s.startedAt.toISOString(), finishedAt: s.finishedAt?.toISOString() ?? null, planned: s.planned, done: s.done, status: s.status }
           : null,
@@ -173,7 +193,7 @@ async function buildNightView(db: Db, night?: number): Promise<Omit<NightView, '
       // no live shift for the asked night: show its reconstructed rows, if any, as a preview
       const rec = await rowsFor(db, date, false);
       const v = view(rec);
-      return { mode: rec.length ? 'preview' : 'empty', night: target, latestObserved, shift: null, txs: [], ...v, ...nav };
+      return { mode: rec.length ? 'preview' : 'empty', night: target, latestObserved, shift: null, txs: [], attestations: [], ...v, ...nav };
     }
   }
 
@@ -182,9 +202,9 @@ async function buildNightView(db: Db, night?: number): Promise<Omit<NightView, '
     .select({ n: sql<string | null>`max(${nights.night})::text` })
     .from(nights)
     .where(eq(nights.observed, false));
-  if (!lr?.n) return { mode: 'empty', night: null, latestObserved, shift: null, rows: [], counts: { ...ZERO }, txs: [], prev: null, next: null };
+  if (!lr?.n) return { mode: 'empty', night: null, latestObserved, shift: null, rows: [], counts: { ...ZERO }, txs: [], attestations: [], prev: null, next: null };
   const v = view(await rowsFor(db, lr.n, false));
-  return { mode: 'preview', night: nightOf(lr.n), latestObserved, shift: null, txs: [], prev: null, next: null, ...v };
+  return { mode: 'preview', night: nightOf(lr.n), latestObserved, shift: null, txs: [], attestations: [], prev: null, next: null, ...v };
 }
 
 /** Newest observed nights first (for the night index). */

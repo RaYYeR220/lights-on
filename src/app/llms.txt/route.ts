@@ -1,5 +1,5 @@
 import { RULES_TEXT } from '@/lib/shift/rules';
-import { SCHEMA, schemaUid } from '@/lib/attest/eas';
+import { ROOT_SCHEMA, SCHEMA, rootSchemaUid, schemaUid } from '@/lib/attest/eas';
 import { siteUrl } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
@@ -30,18 +30,22 @@ ${RULES_TEXT.map((r, i) => `${i + 1}. ${r}`).join('\n')}
   - GET ${site}/api/v1/projects/{slug}
   - GET ${site}/api/v1/projects/{slug}/nights?from=yyyymmdd&to=yyyymmdd
   - GET ${site}/api/v1/evidence/{hash}   the canonical evidence bundle for a night
+  - GET ${site}/api/v1/manifest/{hash}   the night manifest: every project-night of a nightly root attestation
   - GET ${site}/api/v1/briefing/{address}   backer briefing for a wallet or .eth name
   - POST ${site}/api/v1/watch { "liveUrl": "...", "repo": "owner/name", "contract": "0x..." }   rate-limited; after its first check succeeds the project is reachable by slug (unlisted)
 - Agent registration (ERC-8004): ${site}/.well-known/agent-registration.json
 
 ## Verify a night yourself
 
-1. Read the night: GET ${site}/api/v1/projects/{slug}/nights. Each night has evidenceHash and attestationUid.
+1. Read the night: GET ${site}/api/v1/projects/{slug}/nights. Each night has evidenceHash, attestationUid and, once attested, attestProof, attestLit30 and attestRoot.
 2. Fetch the evidence: GET ${site}/api/v1/evidence/{evidenceHash}. Hashing the canonical bundle gives evidenceHash.
 3. Re-run the published rules (${site}/methodology) over that bundle: you get the same status.
-4. Look up attestationUid on Base (EAS 0x4200000000000000000000000000000000000021, for example base.easscan.org/attestation/view/{uid}). The attestation carries the status, lit30 and evidenceHash and is made by the watcher's registered agent.
+4. One transaction per night: a Merkle root of every project's verdict. Look up attestationUid on Base (EAS 0x4200000000000000000000000000000000000021, for example base.easscan.org/attestation/view/{uid}); it is made by the watcher's registered agent and carries the root. Rebuild the leaf keccak256(abi.encode(bytes32 keccak256(slug), uint32 night, uint8 0, uint8 status 1-5, uint16 attestLit30, bytes32 evidenceHash)) and hash it up with attestProof (each step: keccak256 of the two hashes concatenated in ascending order): you land on the attested root. The manifestURI in the attestation lists every leaf of the night.
+5. Live runs are attested one by one under the per-project schema: there the attestation's own fields carry the status, lit30 and evidenceHash.
 
-EAS schema (not revocable): ${SCHEMA}
+Nightly root schema (not revocable): ${ROOT_SCHEMA}
+Root schema uid: ${rootSchemaUid()}
+Per-project schema, live runs (not revocable): ${SCHEMA}
 Schema uid: ${schemaUid()}
 
 ## Notes
