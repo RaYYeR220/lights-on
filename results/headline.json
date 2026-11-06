@@ -7,7 +7,7 @@
   "candidates": [
     {
       "id": "hackathon-quiet",
-      "text": "30 of 33 hackathon builds on Base showed no code or deploy activity in the last 30 nights.",
+      "text": "30 of 33 hackathon builds on Base showed no detected commit or deploy activity in the last 30 nights.",
       "keys": [
         "field.hackathon.quiet30",
         "field.hackathon.withHistory"
@@ -19,7 +19,7 @@
     },
     {
       "id": "v01-still-lit",
-      "text": "Of the 10 Vibeathon 01 finalists, 0 showed code or deploy activity in the last 30 nights, 4 could be checked, and 6 have no public history to check (99 days after the results).",
+      "text": "Of the 10 Vibeathon 01 finalists, 0 showed detected commit or deploy activity in the last 30 nights, 4 could be checked, and 6 have no usable public history (99 days after the results).",
       "keys": [
         "vibeathon01.summary.finalists",
         "vibeathon01.summary.active30",
@@ -37,7 +37,7 @@
     },
     {
       "id": "commit-no-ship",
-      "text": "5 of 46 projects with history had commits in the last 30 nights but no detected deploy.",
+      "text": "5 of 46 projects with a full 30-night window had commits but no detected deploy.",
       "keys": [
         "commitVsShip.commitsNoVerifiedShip",
         "commitVsShip.withHistory"
@@ -49,7 +49,7 @@
     },
     {
       "id": "reference-vs-hackathon",
-      "text": "8 of 8 big reference apps were active in the last 30 nights, against 3 of 33 hackathon builds.",
+      "text": "8 of 8 big reference apps showed detected commit or deploy activity in the last 30 nights, against 3 of 33 hackathon builds.",
       "keys": [
         "field.reference.active30",
         "field.reference.withHistory",

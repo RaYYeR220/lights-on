@@ -60,7 +60,7 @@ async function main() {
   fs.mkdirSync(path.join(ROOT, 'results', 'raw'), { recursive: true });
   fs.writeFileSync(path.join(ROOT, 'results', 'raw', 'study-projects.json'), JSON.stringify({ latest, table }, null, 2));
 
-  const meta = { basis: BASIS, asOf: new Date().toISOString().slice(0, 10), latestNight: latest, window30From: windowStart(latest, 30), window90From: windowStart(latest, 90) };
+  const meta = { basis: BASIS, asOf: latest, latestNight: latest, window30From: windowStart(latest, 30), window90From: windowStart(latest, 90) };
 
   // field
   const field: Record<string, unknown> = { ...meta };
@@ -69,27 +69,32 @@ async function main() {
 
   // vibeathon01
   const fin = table.filter((r) => r.cohort === 'vibeathon01');
+  const missing = fin.filter((r) => !probeBy.has(norm(r.name)) && r.liveUp.source !== 'liveapp').map((r) => r.name);
+  if (fin.length !== 10 || missing.length) throw new Error(`expected 10 finalists with liveUp evidence; got ${fin.length}, no probe row for: ${missing.join(', ') || '-'}`);
   const vibeathon01 = {
     ...meta,
     resultsDate: V01_RESULTS_DATE,
     daysSinceResults: daysBetween(V01_RESULTS_DATE, latest),
-    liveUpBasis: 'liveUp = last HTTP probe (2026-11-05) answered 2xx/3xx; says nothing about whether the app works or is maintained',
+    liveUpBasis: `liveUp = HTTP probe of ${probe.probed_at} answered 2xx/3xx; says nothing about whether the app works or is maintained`,
     perProject: fin.map((r) => ({ name: r.name, liveUp: r.liveUp.up, liveUpSource: r.liveUp.source, hasPublicRepo: r.hasPublicRepo, coverage: r.coverage, active30: r.active30, lastActivity: r.lastActivity })),
     summary: {
       finalists: fin.length,
       liveUp: fin.filter((r) => r.liveUp.up === true).length,
       withHistory: fin.filter((r) => r.coverage === 'history').length,
       active30: fin.filter((r) => r.active30).length,
-      unknown: fin.filter((r) => r.coverage === 'none').length,
+      partialWindow: fin.filter((r) => r.coverage === 'partial').length,
+      unknown: fin.filter((r) => r.coverage !== 'history').length,
     },
   };
   out('study-vibeathon01.json', vibeathon01);
 
   // commit vs ship (all cohorts with history)
-  const cvs = commitVsShip(table.map((r) => ({ name: r.name, nights: byProject.get(r.id) ?? [] })), latest);
+  const cvs = commitVsShip(table.map((r) => ({ name: r.name, hasPublicRepo: r.hasPublicRepo, nights: byProject.get(r.id) ?? [] })), latest);
   const commitVsShipJson = { ...meta, definition: {
     commitsNoVerifiedShip: 'has building nights in the last 30 but zero shipped nights: commits seen, no deploy detected',
-    shipWithoutPublicCommits: 'shipped nights in the last 30 whose evidence has no repo code commits (deploy-only)',
+    shipNightsWithoutCodeCommits: 'nights shipped by a deploy, release or contract deploy with no code commits that night (full 30-night windows only)',
+    shipNoPublicRepo: 'projects with shipped nights in the last 30 whose hasPublicRepo is false',
+    windows: 'only projects with >= 25 non-unavailable nights in the last 30 are counted; unavailable rows never count as coverage',
   }, ...cvs };
   out('commit-vs-ship.json', commitVsShipJson);
 
@@ -97,7 +102,7 @@ async function main() {
   const data = { field, vibeathon01, commitVsShip: commitVsShipJson };
   out('headline.json', { ...meta, candidates: HEADLINE_TEMPLATES.map((t) => fillTemplate(t.id, t.template, data)) });
 
-  console.log(JSON.stringify({ latest, field: Object.fromEntries(COHORTS.map((c) => [c, field[c]])), v01: vibeathon01.summary, cvs: { withHistory: cvs.withHistory, commitsNoVerifiedShip: cvs.commitsNoVerifiedShip.length, shipWithoutPublicCommits: cvs.shipWithoutPublicCommits.length } }, null, 1));
+  console.log(JSON.stringify({ latest, field: Object.fromEntries(COHORTS.map((c) => [c, field[c]])), v01: vibeathon01.summary, cvs: { withHistory: cvs.withHistory, commitsNoVerifiedShip: cvs.commitsNoVerifiedShip.length, shipNightsWithoutCodeCommits: cvs.shipNightsWithoutCodeCommits.length, shipNoPublicRepo: cvs.shipNoPublicRepo.length, partialWindow: cvs.partialWindow } }, null, 1));
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

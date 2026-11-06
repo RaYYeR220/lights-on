@@ -1,3 +1,8 @@
+/**
+ * Fills <!-- num:key -->…<!-- /num --> spans in markdown files from results/*.json (keys: field.*, vibeathon01.*, commitVsShip.*, headline.*).
+ * Errors on unknown keys. NOTE: field.<cohort>.medianDaysSinceActivityAmongActive is survivor-biased (only projects that
+ * were active at all) and is refused as a standalone key; quote noActivityInHistory next to it in prose instead.
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './_backfill';

@@ -6,7 +6,7 @@
   "window90From": "2026-08-09",
   "resultsDate": "2026-07-30",
   "daysSinceResults": 99,
-  "liveUpBasis": "liveUp = last HTTP probe (2026-11-05) answered 2xx/3xx; says nothing about whether the app works or is maintained",
+  "liveUpBasis": "liveUp = HTTP probe of 2026-11-05T23:47:18.200366+00:00 answered 2xx/3xx; says nothing about whether the app works or is maintained",
   "perProject": [
     {
       "name": "Onetoken",
@@ -104,6 +104,7 @@
     "liveUp": 8,
     "withHistory": 4,
     "active30": 0,
+    "partialWindow": 0,
     "unknown": 6
   }
 }

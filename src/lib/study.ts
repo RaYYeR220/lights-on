@@ -7,6 +7,9 @@
 export const BASIS = 'reconstructed history (git + Wayback), not attested';
 export const V01_RESULTS_DATE = '2026-07-30';
 
+/** A project counts toward a 30-night statistic only with at least this many non-unavailable nights in the window. */
+export const MIN_FULL_NIGHTS_30 = 25;
+
 export type Cohort = 'vibeathon01' | 'hackathon' | 'reference' | 'vibestarter';
 export const COHORTS: Cohort[] = ['vibeathon01', 'hackathon', 'reference', 'vibestarter'];
 
@@ -63,27 +66,36 @@ export function dedupeNights(nights: NightLite[]): NightLite[] {
 const isActivity = (s: string) => s === 'shipped' || s === 'building';
 
 interface WindowMetrics {
-  coverage: 'history' | 'none';
   nights: number;
+  unavailable: number;
   active: boolean | null;
   shipped: boolean | null;
 }
 
+/** `unavailable` rows are not observations: they never count as coverage (and so never as quiet). */
 function windowMetrics(nights: NightLite[], from: string): WindowMetrics {
-  const w = nights.filter((n) => n.night >= from);
-  if (!w.length) return { coverage: 'none', nights: 0, active: null, shipped: null };
-  return { coverage: 'history', nights: w.length, active: w.some((n) => isActivity(n.status)), shipped: w.some((n) => n.status === 'shipped') };
+  const all = nights.filter((n) => n.night >= from);
+  const w = all.filter((n) => n.status !== 'unavailable');
+  const unavailable = all.length - w.length;
+  if (!w.length) return { nights: 0, unavailable, active: null, shipped: null };
+  return { nights: w.length, unavailable, active: w.some((n) => isActivity(n.status)), shipped: w.some((n) => n.status === 'shipped') };
 }
 
+/** 'history' = full 30-night window; 'partial' = some but < MIN_FULL_NIGHTS_30 nights; 'none' = nothing. */
+export type Coverage = 'history' | 'partial' | 'none';
+const coverageOf = (nights30: number): Coverage => (nights30 >= MIN_FULL_NIGHTS_30 ? 'history' : nights30 > 0 ? 'partial' : 'none');
+
 export interface ProjectMetrics {
-  coverage: 'history' | 'none';
-  /** null = unknown (no coverage), never false */
+  coverage: Coverage;
+  /** null = unknown (no or partial coverage), never false */
   active30: boolean | null;
   shipped30: boolean | null;
   active90: boolean | null;
   shipped90: boolean | null;
+  /** non-unavailable nights in the last 30 / 90 */
   nights30: number;
   nights90: number;
+  unavailable30: number;
   lastActivity: string | null;
   daysSinceActivity: number | null;
 }
@@ -94,10 +106,14 @@ export function projectMetrics(rawNights: NightLite[], latest: string): ProjectM
   const w90 = windowMetrics(nights, windowStart(latest, 90));
   const act = nights.filter((n) => isActivity(n.status));
   const lastActivity = act.length ? act[act.length - 1].night : null;
+  const coverage = coverageOf(w30.nights);
+  const full = coverage === 'history';
   return {
-    coverage: w30.coverage,
-    active30: w30.active, shipped30: w30.shipped, active90: w90.active, shipped90: w90.shipped,
-    nights30: w30.nights, nights90: w90.nights,
+    coverage,
+    // a partial window is unknown, not quiet: no 30-night claim is made from it
+    active30: full ? w30.active : null, shipped30: full ? w30.shipped : null,
+    active90: w90.active, shipped90: w90.shipped,
+    nights30: w30.nights, nights90: w90.nights, unavailable30: w30.unavailable,
     lastActivity, daysSinceActivity: lastActivity ? daysBetween(lastActivity, latest) : null,
   };
 }
@@ -110,12 +126,23 @@ export function median(xs: number[]): number | null {
 }
 
 export interface FieldSummary {
-  n: number; withHistory: number; active30: number; shipped30: number;
-  /** withHistory - active30: history exists and shows no commit or deploy. Projects without history are not counted here. */
+  n: number;
+  /** projects with a full 30-night window (>= MIN_FULL_NIGHTS_30 non-unavailable nights); all 30-night counts use only these */
+  withHistory: number;
+  /** projects with some but too few nights in the last 30: excluded from every 30-night count */
+  partialWindow: number;
+  active30: number;
+  shipped30: number;
+  /** withHistory - active30: full window and no detected commit or deploy. Unknown / partial projects are not counted. */
   quiet30: number;
-  /** median over projects with history AND some activity in the (<=90 night) history */
-  medianDaysSinceActivity: number | null;
-  /** projects with history but no activity at all in the available history (excluded from the median) */
+  /** `unavailable` nights in the last 30 across the cohort (never counted as coverage) */
+  unavailableNights30: number;
+  /**
+   * Median days since last activity among full-window projects that HAVE some activity in their (<=90 night) history.
+   * Survivor-biased: only meaningful next to noActivityInHistory; never quote it alone.
+   */
+  medianDaysSinceActivityAmongActive: number | null;
+  /** full-window projects with no activity at all in the available history (excluded from the median) */
   noActivityInHistory: number;
 }
 
@@ -123,32 +150,44 @@ export function fieldSummary(rows: ProjectMetrics[]): FieldSummary {
   const h = rows.filter((r) => r.coverage === 'history');
   const active30 = h.filter((r) => r.active30).length;
   return {
-    n: rows.length, withHistory: h.length, active30, shipped30: h.filter((r) => r.shipped30).length,
+    n: rows.length,
+    withHistory: h.length,
+    partialWindow: rows.filter((r) => r.coverage === 'partial').length,
+    active30,
+    shipped30: h.filter((r) => r.shipped30).length,
     quiet30: h.length - active30,
-    medianDaysSinceActivity: median(h.filter((r) => r.daysSinceActivity != null).map((r) => r.daysSinceActivity as number)),
+    unavailableNights30: rows.reduce((a, r) => a + r.unavailable30, 0),
+    medianDaysSinceActivityAmongActive: median(h.filter((r) => r.daysSinceActivity != null).map((r) => r.daysSinceActivity as number)),
     noActivityInHistory: h.filter((r) => r.lastActivity == null).length,
   };
 }
 
 export interface CommitVsShip {
-  /** projects with history in the window */
+  /** projects with a full 30-night window */
   withHistory: number;
+  /** projects with a partial window (excluded) */
+  partialWindow: number;
+  /** has building nights in the last 30 but zero shipped nights */
   commitsNoVerifiedShip: string[];
-  shipWithoutPublicCommits: { name: string; nights: number }[];
+  /** nights shipped by a deploy (Wayback fingerprint change) with no code commits that night, per project */
+  shipNightsWithoutCodeCommits: { name: string; nights: number }[];
+  /** projects with shipped nights in the last 30 and no public repo (hasPublicRepo === false) */
+  shipNoPublicRepo: string[];
 }
 
-/** Over each project's nights in the last 30: commits seen but no deploy; deploys seen on nights with no repo commits. */
-export function commitVsShip(byProject: { name: string; nights: NightLite[] }[], latest: string): CommitVsShip {
+/** Over each project's last 30 nights; full windows only. */
+export function commitVsShip(byProject: { name: string; hasPublicRepo?: boolean; nights: NightLite[] }[], latest: string): CommitVsShip {
   const from = windowStart(latest, 30);
-  const out: CommitVsShip = { withHistory: 0, commitsNoVerifiedShip: [], shipWithoutPublicCommits: [] };
+  const out: CommitVsShip = { withHistory: 0, partialWindow: 0, commitsNoVerifiedShip: [], shipNightsWithoutCodeCommits: [], shipNoPublicRepo: [] };
   for (const p of byProject) {
-    const w = dedupeNights(p.nights).filter((n) => n.night >= from);
-    if (!w.length) continue;
+    const w = dedupeNights(p.nights).filter((n) => n.night >= from && n.status !== 'unavailable');
+    if (w.length < MIN_FULL_NIGHTS_30) { if (w.length) out.partialWindow++; continue; }
     out.withHistory++;
     const shipped = w.filter((n) => n.status === 'shipped');
     if (!shipped.length && w.some((n) => n.status === 'building')) out.commitsNoVerifiedShip.push(p.name);
     const noCommit = shipped.filter((n) => !(n.reasons ?? []).includes('repo.code_commits')).length;
-    if (noCommit) out.shipWithoutPublicCommits.push({ name: p.name, nights: noCommit });
+    if (noCommit) out.shipNightsWithoutCodeCommits.push({ name: p.name, nights: noCommit });
+    if (shipped.length && p.hasPublicRepo === false) out.shipNoPublicRepo.push(p.name);
   }
   return out;
 }
@@ -181,13 +220,19 @@ export function fillTemplate(id: string, template: string, data: unknown): Candi
 }
 
 export const HEADLINE_TEMPLATES: { id: string; template: string }[] = [
-  { id: 'hackathon-quiet', template: '{field.hackathon.quiet30} of {field.hackathon.withHistory} hackathon builds on Base showed no code or deploy activity in the last 30 nights.' },
-  { id: 'v01-still-lit', template: 'Of the {vibeathon01.summary.finalists} Vibeathon 01 finalists, {vibeathon01.summary.active30} showed code or deploy activity in the last 30 nights, {vibeathon01.summary.withHistory} could be checked, and {vibeathon01.summary.unknown} have no public history to check ({vibeathon01.daysSinceResults} days after the results).' },
-  { id: 'commit-no-ship', template: '{commitVsShip.commitsNoVerifiedShip} of {commitVsShip.withHistory} projects with history had commits in the last 30 nights but no detected deploy.' },
-  { id: 'reference-vs-hackathon', template: '{field.reference.active30} of {field.reference.withHistory} big reference apps were active in the last 30 nights, against {field.hackathon.active30} of {field.hackathon.withHistory} hackathon builds.' },
+  { id: 'hackathon-quiet', template: '{field.hackathon.quiet30} of {field.hackathon.withHistory} hackathon builds on Base showed no detected commit or deploy activity in the last 30 nights.' },
+  { id: 'v01-still-lit', template: 'Of the {vibeathon01.summary.finalists} Vibeathon 01 finalists, {vibeathon01.summary.active30} showed detected commit or deploy activity in the last 30 nights, {vibeathon01.summary.withHistory} could be checked, and {vibeathon01.summary.unknown} have no usable public history ({vibeathon01.daysSinceResults} days after the results).' },
+  { id: 'commit-no-ship', template: '{commitVsShip.commitsNoVerifiedShip} of {commitVsShip.withHistory} projects with a full 30-night window had commits but no detected deploy.' },
+  { id: 'reference-vs-hackathon', template: '{field.reference.active30} of {field.reference.withHistory} big reference apps showed detected commit or deploy activity in the last 30 nights, against {field.hackathon.active30} of {field.hackathon.withHistory} hackathon builds.' },
 ];
 
-/** Replaces `<!-- num:key -->…<!-- /num -->` spans. Idempotent; throws on unknown keys. */
+/** Keys that must never be quoted on their own (survivor-biased). */
+const STANDALONE_FORBIDDEN = /\.medianDaysSinceActivityAmongActive$/;
+
+/** Replaces `<!-- num:key -->…<!-- /num -->` spans. Idempotent; throws on unknown keys and on the survivor-biased median. */
 export function renderNumbers(md: string, data: unknown): string {
-  return md.replace(/<!-- num:([\w.]+) -->([\s\S]*?)<!-- \/num -->/g, (_m, k: string) => `<!-- num:${k} -->${lookup(data, k)}<!-- /num -->`);
+  return md.replace(/<!-- num:([\w.]+) -->([\s\S]*?)<!-- \/num -->/g, (_m, k: string) => {
+    if (STANDALONE_FORBIDDEN.test(k)) throw new Error(`${k} is survivor-biased and may not be rendered on its own; quote noActivityInHistory alongside it in prose`);
+    return `<!-- num:${k} -->${lookup(data, k)}<!-- /num -->`;
+  });
 }
