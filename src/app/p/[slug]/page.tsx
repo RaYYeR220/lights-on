@@ -4,12 +4,12 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { getProjectView, type ProjectView } from "@/lib/views/project";
 import { nightLabel, STATUS_LABEL, STATUS_MEANING } from "@/lib/views/reasons";
-import { SOURCE_LABEL } from "@/components/tower/model";
+import { ProjectEyebrow } from "@/components/project/ProjectEyebrow";
 import { NightStrip } from "@/components/project/NightStrip";
 import { LiveShift } from "@/components/project/LiveShift";
 import { Tranches } from "@/components/project/Tranches";
 import { getLiveCampaign } from "@/lib/views/vibestarterLive";
-import { shortAddress, telegramLink, telegramProjectToken } from "@/lib/views/backer";
+import { telegramLink, telegramProjectToken } from "@/lib/views/backer";
 import s from "@/components/project/project.module.css";
 
 /** ISR: a project page is rebuilt from the DB at most every 5 minutes. */
@@ -47,20 +47,8 @@ export default async function ProjectPage({ params }: PageProps<"/p/[slug]">) {
   const tg = telegramLink(telegramProjectToken(v.slug));
   return (
     <main id="main" className="wrap page-top">
-      <p className="eyebrow rv">
-        {v.communityAdded ? (
-          <span className="tag" data-testid="community-label">
-            <i className="sw sw-none" aria-hidden="true" />
-            Community-added · unverified
-          </span>
-        ) : (
-          <span>{SOURCE_LABEL[v.source] ?? v.source}</span>
-        )}
-        {v.claimedBy ? <span>Claimed by its founder {shortAddress(v.claimedBy)}</span> : null}
-        <Link className="ul" href="/">
-          Back to the building
-        </Link>
-      </p>
+      <ProjectEyebrow source={v.source} communityAdded={v.communityAdded} claimedBy={v.claimedBy} />
+
       <h1 className="h-page rv d1">{v.name}</h1>
       {v.tagline ? <p className="lede rv d1">{v.tagline}</p> : null}
       <p className={`${s.links} rv d2`}>

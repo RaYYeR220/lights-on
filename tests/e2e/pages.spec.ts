@@ -176,9 +176,9 @@ test.describe("reference pages", () => {
     await expect(page.getByText(/"mcpServers"/)).toBeVisible();
   });
 
-  test("/add says requests open after launch", async ({ page }) => {
+  test("/add explains that community projects are unlisted", async ({ page }) => {
     await page.goto("/add");
-    await expect(page.getByText("Community watch requests open after launch.", { exact: false })).toBeVisible();
+    await expect(page.getByText("Community-added projects are unlisted")).toBeVisible();
   });
 
   for (const path of ["/p/revoke-cash", "/night", `/b/${BACKER}`, "/methodology", "/docs", "/add"]) {
