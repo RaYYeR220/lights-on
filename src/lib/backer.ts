@@ -1,5 +1,6 @@
 import { erc20Abi, formatUnits, getAddress, isAddress, type Address } from 'viem';
 import type { Db } from '@/lib/db';
+import type { ProjectRow } from '@/lib/db/schema';
 import { listProjects } from '@/lib/db/queries';
 import { getBaseClient } from '@/lib/adapters/baseRpc';
 import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
@@ -24,6 +25,8 @@ export interface MulticallLike {
 
 export interface BackerDeps {
   db: Db;
+  /** Pre-loaded watched projects (batch callers load them once). */
+  projects?: ProjectRow[];
   client?: MulticallLike;
   fetch?: BackerFetch;
   now?: () => number;
@@ -36,7 +39,9 @@ export interface BackerProject {
   via: 'vibestarter' | 'token' | 'follow';
   amountWei?: string;
   refundClaimed?: boolean;
-  balance?: string;
+  /** Formatted token balance; null when decimals() could not be read (then see balanceRaw). */
+  balance?: string | null;
+  balanceRaw?: string;
   symbol?: string;
 }
 export interface BackerResult { projects: BackerProject[]; degraded: boolean; displayName?: string }
@@ -49,6 +54,8 @@ export interface VibestarterIndex {
   names: Map<string, string>;
   /** token.launchTxHash (lowercase) -> campaign cuid (what projects.vibestarter.campaignId stores), from /api/campaigns. */
   launchToCuid: Map<string, string>;
+  /** /api/campaigns failed: mapping fell back to titles; this index is not cached. */
+  launchMapFailed?: boolean;
 }
 
 type Rec = Record<string, unknown>;
@@ -66,10 +73,11 @@ async function getJson(doFetch: BackerFetch, url: string): Promise<unknown> {
 }
 
 let cache: { at: number; idx: VibestarterIndex } | null = null;
-export function resetBackerCache(): void { cache = null; }
+let inflight: Promise<VibestarterIndex> | null = null;
+export function resetBackerCache(): void { cache = null; inflight = null; }
 
-/** Campaign launch tx hash -> cuid. Best effort: on failure the title match still works. */
-async function loadLaunchMap(doFetch: BackerFetch): Promise<Map<string, string>> {
+/** Campaign launch tx hash -> cuid. ok=false on failure (title match still works, caller reports degraded). */
+async function loadLaunchMap(doFetch: BackerFetch): Promise<{ map: Map<string, string>; ok: boolean }> {
   const map = new Map<string, string>();
   try {
     const j = await getJson(doFetch, `${API}/api/campaigns?limit=50`);
@@ -81,14 +89,22 @@ async function loadLaunchMap(doFetch: BackerFetch): Promise<Map<string, string>>
         if (id && launch) map.set(launch.toLowerCase(), id);
       }
     }
-  } catch { /* title fallback */ }
-  return map;
+  } catch { return { map, ok: false }; }
+  return { map, ok: true };
 }
 
 /** Throws (fixed code) when the backings endpoint fails; the caller marks the result degraded. */
 export async function loadVibestarterIndex(deps: { fetch?: BackerFetch; now?: () => number } = {}): Promise<VibestarterIndex> {
   const now = (deps.now ?? Date.now)();
   if (cache && now - cache.at < CACHE_MS) return cache.idx;
+  // Concurrent cold requests share one crawl.
+  if (inflight) return inflight;
+  const p = crawlIndex(deps, now).finally(() => { if (inflight === p) inflight = null; });
+  inflight = p;
+  return p;
+}
+
+async function crawlIndex(deps: { fetch?: BackerFetch }, now: number): Promise<VibestarterIndex> {
   const doFetch = deps.fetch ?? ((u) => safeFetch(u));
   const seen = new Set<string>();
   const names = new Map<string, string>();
@@ -123,21 +139,22 @@ export async function loadVibestarterIndex(deps: { fetch?: BackerFetch; now?: ()
     offset += items.length;
   }
   const byWallet = new Map([...sums].map(([w, m]) => [w, [...m.values()]] as [string, Backing[]]));
-  const idx: VibestarterIndex = { byWallet, names, launchToCuid: await loadLaunchMap(doFetch) };
-  cache = { at: now, idx };
+  const launch = await loadLaunchMap(doFetch);
+  const idx: VibestarterIndex = { byWallet, names, launchToCuid: launch.map, ...(launch.ok ? {} : { launchMapFailed: true }) };
+  if (launch.ok) cache = { at: now, idx };
   return idx;
 }
 
 /** Normalises a checksummed or lowercase 0x address; null when invalid. */
 export function parseAddress(raw: string): Address | null {
-  return isAddress(raw, { strict: false }) ? getAddress(raw) : null;
+  return isAddress(raw, { strict: true }) ? getAddress(raw) : null; // mixed case must carry a valid checksum
 }
 
 export async function discoverBacker(address: string, deps: BackerDeps): Promise<BackerResult> {
   const addr = parseAddress(address);
   if (!addr) return { projects: [], degraded: false };
   const wallet = addr.toLowerCase();
-  const projs = await listProjects(deps.db);
+  const projs = deps.projects ?? (await listProjects(deps.db));
   const out = new Map<number, BackerProject>();
   let degraded = false;
 
@@ -155,7 +172,10 @@ export async function discoverBacker(address: string, deps: BackerDeps): Promise
       });
       escrowed.forEach((p, i) => {
         const r = res[i];
-        if (r.status !== 'success' || !Array.isArray(r.result) || typeof r.result[0] !== 'bigint') return; // unknown -> REST fallback
+        if (r.status !== 'success' || !Array.isArray(r.result) || typeof r.result[0] !== 'bigint') {
+          degraded = true; // this project's chain read failed -> REST fallback below
+          return;
+        }
         onchain.add(p.id);
         if (r.result[0] > 0n) {
           out.set(p.id, { id: p.id, slug: p.slug, name: p.name, via: 'vibestarter', amountWei: r.result[0].toString(), refundClaimed: r.result[1] === true });
@@ -172,6 +192,7 @@ export async function discoverBacker(address: string, deps: BackerDeps): Promise
   try {
     const idx = await loadVibestarterIndex(deps);
     displayName = idx.names.get(wallet);
+    if (idx.launchMapFailed) degraded = true;
     for (const b of idx.byWallet.get(wallet) ?? []) {
       const cuid = idx.launchToCuid.get(b.campaignId);
       const title = b.campaignTitle.trim().toLowerCase();
@@ -199,13 +220,21 @@ export async function discoverBacker(address: string, deps: BackerDeps): Promise
       held.forEach((p, i) => {
         const bal = res[i * 2];
         const dec = res[i * 2 + 1];
-        if (bal.status !== 'success' || typeof bal.result !== 'bigint' || bal.result === 0n) return;
-        const decimals = dec.status === 'success' && typeof dec.result === 'number' ? dec.result : 18;
-        const balance = formatUnits(bal.result, decimals);
+        if (bal.status !== 'success' || typeof bal.result !== 'bigint') {
+          degraded = true;
+          return;
+        }
+        if (bal.result === 0n) return;
+        // Never assume 18 decimals: without decimals() report the raw amount only.
+        const decimalsOk = dec.status === 'success' && typeof dec.result === 'number';
+        if (!decimalsOk) degraded = true;
+        const fields = decimalsOk
+          ? { balance: formatUnits(bal.result, dec.result as number) }
+          : { balance: null, balanceRaw: bal.result.toString() };
         const prev = out.get(p.id);
         out.set(p.id, prev
-          ? { ...prev, balance, symbol: p.token!.symbol }
-          : { id: p.id, slug: p.slug, name: p.name, via: 'token', balance, symbol: p.token!.symbol });
+          ? { ...prev, ...fields, symbol: p.token!.symbol }
+          : { id: p.id, slug: p.slug, name: p.name, via: 'token', ...fields, symbol: p.token!.symbol });
       });
     } catch (e) {
       degraded = true;
@@ -218,10 +247,12 @@ export async function discoverBacker(address: string, deps: BackerDeps): Promise
 /** Plug for `onShiftFinalized({ resolveAddresses })`: project ids for a set of wallets; bad addresses and failures are skipped. */
 export async function resolveBackerProjectIds(addresses: string[], deps: BackerDeps): Promise<number[]> {
   const ids = new Set<number>();
-  for (const a of new Set(addresses)) {
-    if (!parseAddress(a)) continue;
+  const valid = [...new Set(addresses)].filter((a) => parseAddress(a));
+  if (valid.length === 0) return [];
+  const shared = { ...deps, projects: deps.projects ?? (await listProjects(deps.db)) }; // one project list for every address
+  for (const a of valid) {
     try {
-      for (const p of (await discoverBacker(a, deps)).projects) ids.add(p.id);
+      for (const p of (await discoverBacker(a, shared)).projects) ids.add(p.id);
     } catch (e) {
       console.error('backer.resolve failed:', safeErrorCode(e));
     }
