@@ -12,6 +12,28 @@ import { privateKeyToAccount } from 'viem/accounts';
 
 // Empty strings (e.g. `KEY=` in .env) count as unset.
 const blank = (v: unknown) => (v === '' ? undefined : v);
+
+/**
+ * The same leniency as the code that reads each variable, so the check never rejects a value the app accepts:
+ * a key without `0x` (getWallet adds it), a bot name with `@` (telegramLink strips it), empty entries in the attester
+ * list (Verify drops them).
+ */
+export function normalizeWatcherKey(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const t = v.trim();
+  if (!t) return undefined;
+  return /^[0-9a-fA-F]{64}$/.test(t) ? `0x${t}` : t;
+}
+export function normalizeBot(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const t = v.trim().replace(/^@/, '').trim();
+  return t || undefined;
+}
+export function normalizeAddressList(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const xs = v.split(',').map((a) => a.trim()).filter(Boolean);
+  return xs.length ? xs.join(',') : undefined;
+}
 const optStr = z.preprocess(blank, z.string().min(1).optional());
 const httpUrl = z.preprocess(blank, z.string().url().refine((u) => /^https?:\/\//.test(u), 'must be an http(s) URL').optional());
 
@@ -20,15 +42,15 @@ const schema = z.object({
   NEXT_PUBLIC_SITE_URL: z.string().url(),
   NEXT_PUBLIC_VAPID_PUBLIC_KEY: optStr,
   VENICE_API_KEY: optStr,
-  WATCHER_PRIVATE_KEY: z.preprocess(blank, z.string().regex(/^0x[0-9a-fA-F]{64}$/, 'must be 0x + 64 hex chars').optional()),
+  WATCHER_PRIVATE_KEY: z.preprocess(normalizeWatcherKey, z.string().regex(/^0x[0-9a-fA-F]{64}$/, 'must be 64 hex chars (0x optional)').optional()),
   WATCHER_AGENT_ID: z.preprocess(blank, z.string().regex(/^\d{1,30}$/, 'must be a decimal agent id').optional()),
   NEXT_PUBLIC_WATCHER_ADDRESS: z.preprocess(
-    blank,
-    z.string().refine((v) => v.split(',').every((a) => isAddress(a.trim(), { strict: false })), 'must be comma-separated 0x addresses').optional(),
+    normalizeAddressList,
+    z.string().refine((v) => v.split(',').every((a) => isAddress(a, { strict: false })), 'must be comma-separated 0x addresses').optional(),
   ),
   TELEGRAM_BOT_TOKEN: optStr,
   TELEGRAM_WEBHOOK_SECRET: optStr,
-  NEXT_PUBLIC_TELEGRAM_BOT: z.preprocess(blank, z.string().regex(/^[A-Za-z0-9_]{3,64}$/, 'bot username without @').optional()),
+  NEXT_PUBLIC_TELEGRAM_BOT: z.preprocess(normalizeBot, z.string().regex(/^[A-Za-z0-9_]{3,64}$/, 'must be a bot username').optional()),
   VAPID_PRIVATE_KEY: optStr,
   INTERNAL_RUN_TOKEN: optStr,
   CRON_SECRET: optStr,
@@ -48,12 +70,17 @@ export function parseEnv(source: Source = process.env): Env {
   return schema.parse(source);
 }
 
-/** Server variables the production deployment cannot run without (besides the two parseEnv requires). */
+/** Always required (parseEnv rejects without them). */
+const REQUIRED = new Set(['DATABASE_URL', 'NEXT_PUBLIC_SITE_URL']);
+/** Server variables the production deployment cannot run without (besides REQUIRED). */
 const REQUIRED_IN_PROD = ['INTERNAL_RUN_TOKEN', 'CRON_SECRET'] as const;
 
 export interface EnvReport { errors: string[]; warnings: string[] }
 
-/** Names of missing or malformed variables (errors) and of switched-off features (warnings); never any value. */
+/**
+ * Missing or malformed REQUIRED variables are errors; a malformed OPTIONAL one is a warning (its feature reads it with
+ * its own fallback and degrades, the site still serves). Never any value, only names.
+ */
 export function checkEnv(source: Source = process.env, opts: { production?: boolean } = {}): EnvReport {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -61,7 +88,8 @@ export function checkEnv(source: Source = process.env, opts: { production?: bool
   if (!r.success) {
     for (const i of r.error.issues) {
       const name = String(i.path[0] ?? '?');
-      errors.push(source[name] ? `${name}: ${i.message}` : `${name} is not set`);
+      const msg = source[name] ? `${name}: ${i.message}` : `${name} is not set`;
+      (REQUIRED.has(name) ? errors : warnings).push(REQUIRED.has(name) ? msg : `${msg} (its feature is off or degraded)`);
     }
   }
   const set = (k: string) => !!source[k];
@@ -72,9 +100,10 @@ export function checkEnv(source: Source = process.env, opts: { production?: bool
   }
   if (!set('WATCHER_PRIVATE_KEY')) warnings.push('WATCHER_PRIVATE_KEY is not set: nights are not attested');
   if (!set('WATCHER_AGENT_ID') || source.WATCHER_AGENT_ID === '0') warnings.push('WATCHER_AGENT_ID is not set: nights are not attested');
-  if (set('WATCHER_PRIVATE_KEY') && /^0x[0-9a-fA-F]{64}$/.test(source.WATCHER_PRIVATE_KEY!)) {
-    const me = privateKeyToAccount(source.WATCHER_PRIVATE_KEY as `0x${string}`).address.toLowerCase();
-    const allow = (source.NEXT_PUBLIC_WATCHER_ADDRESS ?? '').split(',').map((a) => a.trim().toLowerCase());
+  const key = normalizeWatcherKey(source.WATCHER_PRIVATE_KEY);
+  if (typeof key === 'string' && /^0x[0-9a-fA-F]{64}$/.test(key)) {
+    const me = privateKeyToAccount(key as `0x${string}`).address.toLowerCase();
+    const allow = String(normalizeAddressList(source.NEXT_PUBLIC_WATCHER_ADDRESS) ?? '').split(',').map((a) => a.toLowerCase());
     if (!allow.includes(me)) warnings.push('NEXT_PUBLIC_WATCHER_ADDRESS does not include the watcher wallet: in-browser Verify will fail');
   }
   if (!set('INTERNAL_BASE_URL') && !set('NEXT_PUBLIC_SITE_URL')) warnings.push('INTERNAL_BASE_URL is not set: shift runs go to the request origin');

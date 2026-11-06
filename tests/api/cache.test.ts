@@ -60,7 +60,7 @@ describe('process cache', () => {
 });
 
 describe('REST: canonical queries and cached answers', () => {
-  it('redirects unknown or reordered params to the canonical URL with a cacheable 308, no DB read', async () => {
+  it('redirects unknown params or other values once to the canonical URL (307, never cached), no DB read', async () => {
     const cases: [string, string][] = [
       ['/api/v1/projects?with=history,lastNight', '/api/v1/projects?with=lastNight,history'],
       ['/api/v1/projects?with=lastNight,history&cb=123', '/api/v1/projects?with=lastNight,history'],
@@ -69,18 +69,30 @@ describe('REST: canonical queries and cached answers', () => {
     ];
     for (const [from, to] of cases) {
       const r = await projectsGET(new Request(`http://x${from}`));
-      expect(r.status).toBe(308);
+      expect(r.status).toBe(307);
       expect(r.headers.get('location')).toBe(to);
-      expect(r.headers.get('cache-control')).toContain('s-maxage');
+      expect(r.headers.get('cache-control')).toBe('no-store');
+      // following it lands on a 200 (exactly one hop), also in the form Next re-encodes it to
+      expect((await projectsGET(new Request(`http://x${to}`))).status).toBe(200);
+      expect((await projectsGET(new Request(`http://x${to.replace(',', '%2C')}`))).status).toBe(200);
     }
-    expect((await projectsGET(new Request('http://x/api/v1/projects?with=lastNight,history'))).status).toBe(200);
     const one = await projectGET(new Request('http://x/api/v1/projects/revoke-cash?x=1'), slugCtx('revoke-cash'));
-    expect([one.status, one.headers.get('location')]).toEqual([308, '/api/v1/projects/revoke-cash']);
+    expect([one.status, one.headers.get('location')]).toEqual([307, '/api/v1/projects/revoke-cash']);
     const ns = await nightsGET(new Request('http://x/api/v1/projects/revoke-cash/nights?to=20261106&from=20261101&z=1'), slugCtx('revoke-cash'));
-    expect([ns.status, ns.headers.get('location')]).toEqual([308, '/api/v1/projects/revoke-cash/nights?from=20261101&to=20261106']);
+    expect([ns.status, ns.headers.get('location')]).toEqual([307, '/api/v1/projects/revoke-cash/nights?from=20261101&to=20261106']);
+    // the same params in another order are the same request: no redirect
+    expect((await nightsGET(new Request('http://x/api/v1/projects/revoke-cash/nights?to=20261106&from=20261101'), slugCtx('revoke-cash'))).status).toBe(200);
     const ev = await evidenceGET(new Request(`http://x/api/v1/evidence/${HASH}?v=2`), { params: Promise.resolve({ hash: HASH }) });
-    expect([ev.status, ev.headers.get('location')]).toEqual([308, `/api/v1/evidence/${HASH}`]);
+    expect([ev.status, ev.headers.get('location')]).toEqual([307, `/api/v1/evidence/${HASH}`]);
     expect((await evidenceGET(new Request(`http://x/api/v1/evidence/${HASH}`), { params: Promise.resolve({ hash: HASH }) })).status).toBe(200);
+  });
+
+  it('the documented URL as Next hands it to the handler (comma re-encoded as %2C) is a 200, not a redirect', async () => {
+    const r = await projectsGET(new Request('http://x/api/v1/projects?with=lastNight%2Chistory'));
+    expect(r.status).toBe(200);
+    expect(r.headers.get('location')).toBeNull();
+    expect((await body(r)).projects[0].history).toHaveLength(90);
+    expect((await projectsGET(new Request('http://x/api/v1/projects?with=history'))).status).toBe(200);
   });
 
   it('a second list call within the TTL is served from memory (REST and MCP share the entry)', async () => {

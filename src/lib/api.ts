@@ -21,18 +21,23 @@ export function fail(e: unknown): Response {
   return json({ error: 'internal' }, 500, CORS);
 }
 
+/** Decoded `k=v` pairs, sorted: the same set however it is encoded or ordered. */
+const pairKey = (pairs: [string, string][]) => pairs.map(([k, v]) => `${k}=${v}`).sort().join('&');
+
 /**
  * The CDN caches by full URL, so `?x=<random>` would reach the function (and the database) every time. A request whose
- * query is not exactly the canonical one (known params only, fixed order and form) gets a cacheable 308 to it instead;
- * the redirect itself costs no database read.
+ * DECODED query differs from the canonical one (unknown params, other values) gets a 307 to it; the redirect itself
+ * costs no database read. The compare is on decoded, sorted pairs because Next re-encodes the URL before the handler
+ * runs (`,` arrives as `%2C`): comparing raw strings looped forever. The redirect is never cached, so a wrong one can
+ * never stay pinned at the CDN.
  */
 export function canonicalRedirect(req: Request, query: [string, string][]): Response | null {
   const u = new URL(req.url);
+  if (pairKey([...u.searchParams]) === pairKey(query)) return null;
   const canon = query.length ? `?${query.map(([k, v]) => `${k}=${v}`).join('&')}` : '';
-  if (u.search === canon) return null;
   return new Response(null, {
-    status: 308,
-    headers: { ...CORS, location: `${u.pathname}${canon}`, 'cache-control': 'public, s-maxage=86400' },
+    status: 307,
+    headers: { ...CORS, location: `${u.pathname}${canon}`, 'cache-control': 'no-store' },
   });
 }
 

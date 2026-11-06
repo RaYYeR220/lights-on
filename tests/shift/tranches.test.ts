@@ -98,4 +98,15 @@ describe('tranche_events from the shift run', () => {
     await upsertTrancheEvents(db, p.id, SCHEDULE.slice(0, 2));
     expect(await getOpenTranches(db, [p.id], NOW)).toEqual([]);
   });
+
+  it('the evidence fallback only runs for projects with a Vibestarter campaign', async () => {
+    const other = await seedProject(db, 'plain-app', { vibestarter: null });
+    const b: EvidenceBundle = {
+      v: 1, rulesVersion: 'r', project: 'plain-app', night: 20261105, kind: 'nightly', window: WINDOW,
+      sources: { repo: null, liveapp: null, chain: null, vibestarter: { source: 'vibestarter', tier: 'verified', ok: true, facts: facts(SCHEDULE) } },
+    };
+    await saveEvidence(db, '0xplain', other.id, '2026-11-05', b);
+    expect(await getTranches(db, other.id)).toEqual([]);
+    expect(await getOpenTranches(db, [other.id], NOW)).toEqual([]);
+  });
 });

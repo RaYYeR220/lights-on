@@ -568,8 +568,8 @@ export async function upsertTrancheEvents(db: Db, projectId: number, tranches: T
 
 /**
  * Tranche schedules of several projects, by project, index ascending. From `tranche_events` (written by every shift
- * run); a project with no rows there yet falls back to the tranches in its latest evidence bundle with a readable
- * vibestarter source.
+ * run); a Vibestarter project with no rows there yet falls back to the tranches in its latest evidence bundle with a
+ * readable vibestarter source.
  */
 export async function getTrancheSchedules(db: Db, ids: number[]): Promise<Map<number, TrancheRow[]>> {
   const out = new Map<number, TrancheRow[]>();
@@ -579,7 +579,10 @@ export async function getTrancheSchedules(db: Db, ids: number[]): Promise<Map<nu
     .where(inArray(trancheEvents.projectId, uniq))
     .orderBy(asc(trancheEvents.projectId), asc(trancheEvents.trancheIndex));
   for (const r of rows) out.set(r.projectId, [...(out.get(r.projectId) ?? []), r]);
-  const missing = uniq.filter((id) => !out.has(id));
+  // Only Vibestarter projects can have tranches: never scan evidence for the others.
+  const without = uniq.filter((id) => !out.has(id));
+  const missing = without.length === 0 ? [] : (await db.select({ id: projects.id }).from(projects)
+    .where(and(inArray(projects.id, without), isNotNull(projects.vibestarter)))).map((r) => r.id);
   if (missing.length === 0) return out;
   const res = await db.execute(sql`
     SELECT DISTINCT ON (e.project_id) e.project_id AS "projectId", e.bundle #> '{sources,vibestarter,facts,tranches}' AS tranches

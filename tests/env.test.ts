@@ -34,9 +34,10 @@ describe('env', () => {
     expect(hasFeature('attest', { ...minimal, WATCHER_PRIVATE_KEY: KEY, WATCHER_AGENT_ID: '17' })).toBe(true);
   });
 
-  it('rejects malformed WATCHER_PRIVATE_KEY (not 0x + 64 hex)', () => {
+  it('rejects malformed WATCHER_PRIVATE_KEY (not 64 hex, 0x optional like getWallet)', () => {
     expect(() => parseEnv({ ...minimal, WATCHER_PRIVATE_KEY: '0x1234' })).toThrow();
-    expect(() => parseEnv({ ...minimal, WATCHER_PRIVATE_KEY: 'a'.repeat(64) })).toThrow();
+    expect(() => parseEnv({ ...minimal, WATCHER_PRIVATE_KEY: 'z'.repeat(64) })).toThrow();
+    expect(parseEnv({ ...minimal, WATCHER_PRIVATE_KEY: 'a'.repeat(64) }).WATCHER_PRIVATE_KEY).toBe('0x' + 'a'.repeat(64));
     expect(() => parseEnv({ ...minimal, WATCHER_PRIVATE_KEY: '0x' + 'a'.repeat(64) })).not.toThrow();
   });
 
@@ -55,17 +56,45 @@ describe('checkEnv / assertEnv (server start)', () => {
     expect(strictEnv({ VERCEL_ENV: 'preview' })).toBe(false);
   });
 
-  it('production: names every missing required or malformed variable, never a value', () => {
-    const { errors } = checkEnv({
+  it('production: missing or malformed REQUIRED variables are errors, malformed optional ones only warnings; never a value', () => {
+    const { errors, warnings } = checkEnv({
       ...prod, DATABASE_URL: '', INTERNAL_RUN_TOKEN: '', CRON_SECRET: undefined, NEXT_PUBLIC_SITE_URL: 'http://x.example',
       WATCHER_AGENT_ID: 'abc', BASE_RPC_URL: 'not a url', NEXT_PUBLIC_WATCHER_ADDRESS: '0x12', WATCHER_PRIVATE_KEY: '0xdeadbeef',
     }, { production: true });
-    const text = errors.join('\n');
-    for (const name of ['DATABASE_URL', 'INTERNAL_RUN_TOKEN', 'CRON_SECRET', 'NEXT_PUBLIC_SITE_URL', 'WATCHER_AGENT_ID', 'BASE_RPC_URL', 'NEXT_PUBLIC_WATCHER_ADDRESS', 'WATCHER_PRIVATE_KEY']) {
-      expect(text).toContain(name);
+    const e = errors.join('\n');
+    const w = warnings.join('\n');
+    for (const name of ['DATABASE_URL', 'INTERNAL_RUN_TOKEN', 'CRON_SECRET', 'NEXT_PUBLIC_SITE_URL']) expect(e).toContain(name);
+    for (const name of ['WATCHER_AGENT_ID', 'BASE_RPC_URL', 'NEXT_PUBLIC_WATCHER_ADDRESS', 'WATCHER_PRIVATE_KEY']) {
+      expect(w).toContain(name);
+      expect(e).not.toContain(name);
     }
-    expect(text).not.toContain('0xdeadbeef');
-    expect(text).not.toContain('not a url');
+    for (const t of [e, w]) {
+      expect(t).not.toContain('0xdeadbeef');
+      expect(t).not.toContain('not a url');
+    }
+    expect(checkEnv({ ...prod, NEXT_PUBLIC_SITE_URL: 'not a url' }, { production: true }).errors.join()).toContain('NEXT_PUBLIC_SITE_URL');
+  });
+
+  it('accepts what the app accepts: a key without 0x, a bot name with @, empty entries in the attester list', () => {
+    const lenient = {
+      ...prod, WATCHER_PRIVATE_KEY: KEY.slice(2), NEXT_PUBLIC_TELEGRAM_BOT: ' @lights_on_bot ',
+      NEXT_PUBLIC_WATCHER_ADDRESS: ` ${KEY_ADDR}, ,`,
+    };
+    expect(checkEnv(lenient, { production: true })).toEqual({ errors: [], warnings: [] });
+    expect(() => assertEnv(lenient, quiet)).not.toThrow();
+    const e = parseEnv(lenient);
+    expect(e.WATCHER_PRIVATE_KEY).toBe(KEY);
+    expect(e.NEXT_PUBLIC_TELEGRAM_BOT).toBe('lights_on_bot');
+    expect(e.NEXT_PUBLIC_WATCHER_ADDRESS).toBe(KEY_ADDR);
+    expect(parseEnv({ ...minimal, NEXT_PUBLIC_WATCHER_ADDRESS: ' , ' }).NEXT_PUBLIC_WATCHER_ADDRESS).toBeUndefined();
+  });
+
+  it('a malformed optional value never stops the production server; a missing required one does', () => {
+    const odd = { ...prod, NEXT_PUBLIC_TELEGRAM_BOT: 'not a bot!', BASE_RPC_URL: 'nope', WATCHER_AGENT_ID: '12x' };
+    const warn = vi.fn();
+    expect(() => assertEnv(odd, { warn, error: vi.fn() })).not.toThrow();
+    expect(warn.mock.calls.map((c) => c[0]).join('\n')).toMatch(/NEXT_PUBLIC_TELEGRAM_BOT[\s\S]*BASE_RPC_URL|BASE_RPC_URL[\s\S]*NEXT_PUBLIC_TELEGRAM_BOT/);
+    expect(() => assertEnv({ ...odd, DATABASE_URL: '' }, quiet)).toThrow(/DATABASE_URL is not set/);
   });
 
   it('warns about switched-off features: no agent id, a watcher missing from the Verify allowlist', () => {
@@ -80,10 +109,10 @@ describe('checkEnv / assertEnv (server start)', () => {
   it('assertEnv throws on the production deployment, only logs elsewhere; register() runs it on the node runtime', async () => {
     const broken = { ...prod, CRON_SECRET: '' };
     expect(() => assertEnv(broken, quiet)).toThrow(/CRON_SECRET is not set/);
-    // elsewhere the production-only requirements do not apply, and malformed values are logged, not thrown
+    // elsewhere the production-only requirements do not apply, and errors are logged, not thrown
     expect(assertEnv({ ...broken, VERCEL_ENV: 'preview' }, quiet).errors).toEqual([]);
-    expect(() => assertEnv({ ...broken, VERCEL_ENV: 'preview', BASE_RPC_URL: 'nope' }, quiet)).not.toThrow();
-    expect(quiet.error).toHaveBeenCalledWith(expect.stringContaining('BASE_RPC_URL'));
+    expect(() => assertEnv({ ...broken, VERCEL_ENV: 'preview', DATABASE_URL: '' }, quiet)).not.toThrow();
+    expect(quiet.error).toHaveBeenCalledWith(expect.stringContaining('DATABASE_URL'));
     const saved = { ...process.env };
     try {
       Object.assign(process.env, broken, { NEXT_RUNTIME: 'nodejs' });
