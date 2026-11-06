@@ -143,6 +143,8 @@ export const subscriptions = pgTable('subscriptions', {
   ipHash: text('ip_hash'),
   /** Last on-demand AI briefing (1 per chat per hour). */
   aiBriefAt: tsz('ai_brief_at'),
+  /** Webpush reservation not yet confirmed by the push service; senders skip these rows. */
+  pending: boolean('pending').notNull().default(false),
 }, (t) => [
   check('subscriptions_channel_chk', inList('channel', CHANNELS)),
   uniqueIndex('subscriptions_channel_target_uq').on(t.channel, t.target),

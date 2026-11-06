@@ -50,6 +50,13 @@
       "when": 1793951869427,
       "tag": "0006_backfill_endpoint_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793952964602,
+      "tag": "0007_subscription_pending",
+      "breakpoints": true
     }
   ]
 }

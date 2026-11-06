@@ -125,3 +125,28 @@ export const pushHooks: { confirm: (sub: PushSub) => Promise<PushResult> | null 
     }, cfg);
   },
 };
+
+const HOUR = 3_600_000;
+/**
+ * In-memory limiter for confirmation pushes: 10 attempts per IP hash per hour and 300 per hour overall.
+ * State is per server instance and instances are ephemeral (cold starts reset it, parallel instances each keep their
+ * own), so this only bounds abuse; the durable per-IP limit is the reservation row in the database.
+ */
+export const attemptLimiter = {
+  perIp: 10,
+  global: 300,
+  byIp: new Map<string, number[]>(),
+  all: [] as number[],
+  /** Records an attempt; false = over a limit (nothing recorded, nothing may be sent). */
+  take(ipHash: string, now = Date.now()): boolean {
+    this.all = this.all.filter((t) => now - t < HOUR);
+    const mine = (this.byIp.get(ipHash) ?? []).filter((t) => now - t < HOUR);
+    if (mine.length >= this.perIp || this.all.length >= this.global) { this.byIp.set(ipHash, mine); return false; }
+    mine.push(now);
+    this.all.push(now);
+    this.byIp.set(ipHash, mine);
+    if (this.byIp.size > 5000) for (const [k, v] of this.byIp) if (v.every((t) => now - t >= HOUR)) this.byIp.delete(k);
+    return true;
+  },
+  reset() { this.byIp.clear(); this.all = []; },
+};
