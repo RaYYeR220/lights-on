@@ -5,6 +5,7 @@ import { CAPS } from '@/lib/shift/limits';
 import { utcDay } from '@/lib/shift/night';
 import { safeErrorCode } from '@/lib/net/redact';
 import { handleTelegramUpdate, sendMessage } from '@/lib/notify/telegram';
+import { resolveBackerProjectIds } from '@/lib/backer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +27,8 @@ export async function POST(req: Request): Promise<Response> {
     await handleTelegramUpdate(update, {
       db,
       send: (chat, text) => sendMessage(chat, text, { token }),
+      // Address follows (the /b/<address> deep link): same resolver as the nightly fan-out (withNotify).
+      resolveAddresses: (addrs) => resolveBackerProjectIds(addrs, { db }),
       // On-demand /brief may polish with AI (once per chat per hour); same cap as live runs so the nightly shift keeps its reserve.
       briefing: process.env.VENICE_API_KEY
         ? {
