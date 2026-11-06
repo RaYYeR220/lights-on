@@ -13,7 +13,7 @@ export const MIN_FULL_NIGHTS_30 = 25;
 export type Cohort = 'vibeathon01' | 'hackathon' | 'reference' | 'vibestarter';
 export const COHORTS: Cohort[] = ['vibeathon01', 'hackathon', 'reference', 'vibestarter'];
 
-/** The 8 well-known reference apps: `base` entries with `reference: true` in research/seed-projects.json. */
+/** The 8 well-known reference apps: `base` entries with `reference: true` in data/seed-projects.json. */
 export const REFERENCE_APPS = [
   'Uniswap Interface', 'Aave Interface', 'CoW Swap', 'Safe{Wallet}', 'Revoke.cash', 'base.org', 'Blockscout (Base)', 'Nouns Builder',
 ] as const;

@@ -1,0 +1,422 @@
+{
+  "probed_at": "2026-11-05T23:47:18.200366+00:00",
+  "method": "live_status = HTTP status of a GET to live_url (null = no answer). Used by scripts/study.ts as liveUp before any observed night.",
+  "rows": [
+    {
+      "source": "vibeathon01",
+      "name": "Corvo Edge",
+      "category": null,
+      "live_url": "https://app.corvoedge.xyz",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "vibeathon01",
+      "name": "Onetoken",
+      "category": null,
+      "live_url": "https://app.onetokenhub.xyz",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "vibeathon01",
+      "name": "aHand",
+      "category": null,
+      "live_url": "https://www.ahand.in",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "vibeathon01",
+      "name": "FutureRoots",
+      "category": null,
+      "live_url": "https://futureroots.app/",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "vibeathon01",
+      "name": "exSafe",
+      "category": null,
+      "live_url": "https://exsafe-mu.vercel.app/",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "vibeathon01",
+      "name": "EventChain",
+      "category": null,
+      "live_url": "https://eventschain.vercel.app",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "vibeathon01",
+      "name": "Lineage",
+      "category": null,
+      "live_url": "https://lineage-vibeathon.vercel.app",
+      "repo": null,
+      "live_status": 503
+    },
+    {
+      "source": "vibeathon01",
+      "name": "Grayl AI",
+      "category": null,
+      "live_url": "https://ibkid.github.io/Grayl-AI_v3.1/",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "vibeathon01",
+      "name": "Agent Verse",
+      "category": null,
+      "live_url": "http://146.190.70.35:3000/",
+      "repo": null,
+      "live_status": null
+    },
+    {
+      "source": "vibeathon01",
+      "name": "AIDOL",
+      "category": null,
+      "live_url": "https://www.aidol0x.xyz",
+      "repo": null,
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "claw2claw",
+      "category": "defi/agents",
+      "live_url": "https://claw2claw.2bb.dev/",
+      "repo": "2bb-dev/claw2claw",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Stream Vaults",
+      "category": "defi/agents",
+      "live_url": "https://streams-vault.vercel.app/",
+      "repo": "JulioMCruz/Streams",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Void Tactics",
+      "category": "game",
+      "live_url": "https://void-tactics-fe-eth-ny-26.vercel.app/",
+      "repo": "briandoyle81/void-tactics-fe-eth-ny-26",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "SAGE Protocol",
+      "category": "defi",
+      "live_url": "https://sage-three-navy.vercel.app/",
+      "repo": "danelerr/sarm-protocol",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Chatter",
+      "category": "consumer/ai",
+      "live_url": "https://chatterethglobal.vercel.app/",
+      "repo": "kenjohnscreates/chatter",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "KOLlateral",
+      "category": "defi/social",
+      "live_url": "https://kollateral.vercel.app/",
+      "repo": "RomarioKavin1/kollateral",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "MoltQore",
+      "category": "defi/agents",
+      "live_url": "https://eth-global-hackmoney26-web.vercel.app/",
+      "repo": "Zireaelst/ETHGlobal-Hackmoney26",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "tradewise (hackagent)",
+      "category": "agents/defi",
+      "live_url": "https://hackagent-nine.vercel.app/",
+      "repo": "fritzschoff/hackagent",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "PrivatePay",
+      "category": "payments/privacy",
+      "live_url": "https://private-pay-iqgp.vercel.app/",
+      "repo": "AmaanSayyad/Private-Pay-",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "YieldMax.AI",
+      "category": "defi/agents",
+      "live_url": "https://yieldmax-ai.vercel.app/",
+      "repo": "Pranav2456/ethglobal-agentic",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "athl3te",
+      "category": "consumer",
+      "live_url": "https://athl3te.vercel.app/",
+      "repo": "imApoorva36/athl3te",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "BasedBills",
+      "category": "payments/consumer",
+      "live_url": "https://base-hackathon-based-bills.vercel.app/",
+      "repo": "CodeByNikolas/Base-Hackathon---BasedBills",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "IsYourDayOk",
+      "category": "consumer/miniapp",
+      "live_url": "https://is-your-day-ok.vercel.app/",
+      "repo": "lynnmeanslight/IsYourDayOk",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "BasePay",
+      "category": "payments",
+      "live_url": "https://base-pay.replit.app/",
+      "repo": "osr21/basepay-dapp",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Base Smart Profiler",
+      "category": "analytics",
+      "live_url": "https://base-smart-profiler.vercel.app/",
+      "repo": "Makabeez/base-smart-profiler",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "ShadowKey",
+      "category": "agents/privacy",
+      "live_url": "https://shadowkey-ai.vercel.app/",
+      "repo": "kimboltpro3-create/shadowkey",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "CampusCoin",
+      "category": "consumer/miniapp",
+      "live_url": "https://base-batches-miniapp-cc.vercel.app/",
+      "repo": "MarxMad/BaseBatches-MiniappCC",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Gorilla Counter",
+      "category": "game/miniapp",
+      "live_url": "https://gorilla-counter.vercel.app/",
+      "repo": "gorillachimps/gorilla-counter",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Capybara Petter",
+      "category": "game/miniapp",
+      "live_url": "https://capybara-petter.vercel.app/",
+      "repo": "gorillachimps/capybara-petter",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Pool Mini",
+      "category": "social/payments/miniapp",
+      "live_url": "https://pool-mini.vercel.app/",
+      "repo": "Pool-Escrow/pool-mini-app",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Tap That Mosquito",
+      "category": "game/miniapp",
+      "live_url": "https://tap-mosquito.vercel.app/",
+      "repo": "unclekaldoteth/tap-mosquitos",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "TouchBase",
+      "category": "social/miniapp",
+      "live_url": "https://touch-base-delta.vercel.app/",
+      "repo": "elbowfox/touch-base",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Base Streak Arena",
+      "category": "game/miniapp",
+      "live_url": "https://base-streak-arena.vercel.app/",
+      "repo": "ulsreall/base-streak-arena",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Donate Ronin",
+      "category": "payments/miniapp",
+      "live_url": "https://donate-app-lac.vercel.app/",
+      "repo": "RoninBuild/donate-app",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "MyOpini Quiz",
+      "category": "game/miniapp",
+      "live_url": "https://myopini.vercel.app/",
+      "repo": "nainasachdev10/MyOpini_quiz",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Anons DAO",
+      "category": "dao/agents",
+      "live_url": "https://anons-dao.vercel.app/",
+      "repo": "ClawdiaETH/anons-dao",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "B20 Launcher",
+      "category": "tokens/infra",
+      "live_url": "https://b20launcher.rakibhq.xyz/",
+      "repo": "0xmdrakib/B20Launcher",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "CodeTrack",
+      "category": "analytics",
+      "live_url": "https://codetrack-phi.vercel.app/",
+      "repo": "memosr/codetrack",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Shellsino",
+      "category": "game/agents",
+      "live_url": "https://team-shellsino.vercel.app/",
+      "repo": "openwork-hackathon/team-shellsino",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Coal",
+      "category": "payments/agents",
+      "live_url": "https://www.usecoal.xyz/",
+      "repo": "emmanuel39hanks/coal",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Vouch402",
+      "category": "agents/infra",
+      "live_url": "https://www.vouch402.xyz/",
+      "repo": "Eras256/Vouchx402",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "x402ai",
+      "category": "agents/infra",
+      "live_url": "https://x402ai.dev/",
+      "repo": "ukenal/x402ai",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "NewsRiver Intelligence",
+      "category": "agents",
+      "live_url": "https://showcase.yieldcircle.app/",
+      "repo": "BidurS/newsriver-showcase",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Vibestarter",
+      "category": "launchpad/crowdfunding",
+      "live_url": "https://app.vibestarter.xyz/",
+      "repo": "vibesprotocol/vibestarter-contracts",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Uniswap Interface",
+      "category": "dex/reference",
+      "live_url": "https://app.uniswap.org/",
+      "repo": "Uniswap/interface",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Aave Interface",
+      "category": "lending/reference",
+      "live_url": "https://app.aave.com/",
+      "repo": "aave/interface",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "CoW Swap",
+      "category": "dex/reference",
+      "live_url": "https://swap.cow.fi/",
+      "repo": "cowprotocol/cowswap",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Safe{Wallet}",
+      "category": "wallet/reference",
+      "live_url": "https://app.safe.global/",
+      "repo": "safe-global/safe-wallet-monorepo",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Revoke.cash",
+      "category": "security/reference",
+      "live_url": "https://revoke.cash/",
+      "repo": "RevokeCash/revoke.cash",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "base.org",
+      "category": "infra/reference",
+      "live_url": "https://www.base.org/",
+      "repo": "base/web",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Blockscout (Base)",
+      "category": "explorer/reference",
+      "live_url": "https://base.blockscout.com/",
+      "repo": "blockscout/frontend",
+      "live_status": 200
+    },
+    {
+      "source": "base",
+      "name": "Nouns Builder",
+      "category": "dao/reference",
+      "live_url": "https://nouns.build/",
+      "repo": "ourzora/nouns-builder",
+      "live_status": 200
+    }
+  ]
+}

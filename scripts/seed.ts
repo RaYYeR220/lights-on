@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadEnv, flag, ROOT } from './_backfill';
+import { loadEnv, flag, dataDir } from './_backfill';
 import { listVibestarterCampaigns } from '@/lib/adapters/vibestarter';
 import { buildSeedProjects, mergeDraft, type SeedFile } from '@/lib/backfill/seed';
 
 loadEnv();
 
 async function main() {
-  const seed = JSON.parse(fs.readFileSync(path.resolve(ROOT, '../research/seed-projects.json'), 'utf8')) as SeedFile;
+  // data/seed-projects.json by default; --data <dir> reads <dir>/seed-projects.json
+  const seed = JSON.parse(fs.readFileSync(path.join(dataDir(), 'seed-projects.json'), 'utf8')) as SeedFile;
   const campaigns = await listVibestarterCampaigns();
   const { drafts, skippedRaises } = buildSeedProjects(seed, campaigns);
   console.log(`vibestarter campaigns: ${campaigns.length} (skipped ${skippedRaises.length}: ${skippedRaises.map((c) => `${c.title}[${c.status}]`).join(', ') || 'none'})`);

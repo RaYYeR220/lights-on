@@ -1,0 +1,1020 @@
+{
+  "_meta": {
+    "generated": "2026-11-06",
+    "about": "Public project info used by scripts/seed.ts: names, live URLs, repos, Base contracts, categories, sources."
+  },
+  "vibeathon01": [
+    {
+      "name": "Corvo Edge",
+      "live_url": "https://app.corvoedge.xyz",
+      "repo": null,
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xce58d80d32ce44769bdcfcbf1227599ed126ee79",
+          "label": "$CORVO token (Vibestarter launch)"
+        },
+        {
+          "chainId": 8453,
+          "address": "0xa6f5e2a0547de81a7761567d87c226d36733c4b6",
+          "label": "Vibestarter tranche escrow for the raise (EIP-1167 clone)"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x60bc5323c0e0e9144af0b35ce8de119fc743e345",
+          "label": "founder wallet (EOA, per Vibestarter API)"
+        }
+      ],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners",
+        "https://app.vibestarter.xyz/api/campaigns",
+        "https://corvoedge.xyz/",
+        "https://www.definitive.fi/blog/corvo-edge"
+      ]
+    },
+    {
+      "name": "Onetoken",
+      "live_url": "https://app.onetokenhub.xyz",
+      "repo": null,
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x8f80e18445e834469ef030fdc0e7cd64aa109165",
+          "label": "$ONE token (Vibestarter launch)"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x2a82ca09924da6804e200e57b183c408e9f4c48b",
+          "label": "Vibestarter tranche escrow for the raise (EIP-1167 clone)"
+        },
+        {
+          "chainId": 8453,
+          "address": "0xd49866d38d80b40ede2e5ce121de5691dc060ea4",
+          "label": "founder wallet (EOA, per Vibestarter API)"
+        }
+      ],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners",
+        "https://app.vibestarter.xyz/api/campaigns",
+        "https://app.vibestarter.xyz/"
+      ]
+    },
+    {
+      "name": "aHand",
+      "live_url": "https://www.ahand.in",
+      "repo": {
+        "host": "github",
+        "name": "guy-do-or-die/ahand",
+        "default_branch": "main"
+      },
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x840C2D884ad2d17c3756c4cc86C84E801A57E811",
+          "label": "AHandCore (Base Sepolia)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x9d4AC0e5aA9A11F161c2D5e39A931Dde24375b17",
+          "label": "AHandSignals (Base Sepolia)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x964Ec4995d43cc6Da4BD9666617b0877012Db63a",
+          "label": "AHandWitness (Base Sepolia)"
+        }
+      ],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners",
+        "https://github.com/guy-do-or-die/ahand",
+        "https://ethglobal.com/showcase/ahand-uy7rn"
+      ]
+    },
+    {
+      "name": "FutureRoots",
+      "live_url": "https://futureroots.app/",
+      "repo": null,
+      "contracts": [],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners"
+      ]
+    },
+    {
+      "name": "exSafe",
+      "live_url": "https://exsafe-mu.vercel.app/",
+      "repo": {
+        "host": "github",
+        "name": "aricandra3/exsafe",
+        "default_branch": "main"
+      },
+      "contracts": [],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners",
+        "https://github.com/aricandra3/exsafe"
+      ]
+    },
+    {
+      "name": "EventChain",
+      "live_url": "https://eventschain.vercel.app",
+      "repo": {
+        "host": "github",
+        "name": "drmukty/EventChain",
+        "default_branch": "main"
+      },
+      "contracts": [],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners",
+        "https://github.com/drmukty/EventChain"
+      ]
+    },
+    {
+      "name": "Lineage",
+      "live_url": "https://lineage-vibeathon.vercel.app",
+      "repo": null,
+      "contracts": [],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners"
+      ]
+    },
+    {
+      "name": "Grayl AI",
+      "live_url": "https://ibkid.github.io/Grayl-AI_v3.1/",
+      "repo": {
+        "host": "github",
+        "name": "ibkid/Grayl-AI_v3",
+        "default_branch": "main"
+      },
+      "serving_repo": {
+        "host": "github",
+        "name": "ibkid/Grayl-AI_v3.1",
+        "default_branch": "main"
+      },
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x181ceb179c78cBF27C31a27Fa14Ba70FC2F6c968",
+          "label": "GENESIS_CONTRACT referenced in index.html (Base Sepolia; 44-byte proxy-like code)"
+        }
+      ],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners",
+        "https://github.com/ibkid/Grayl-AI_v3"
+      ]
+    },
+    {
+      "name": "Agent Verse",
+      "live_url": "http://146.190.70.35:3000/",
+      "repo": null,
+      "contracts": [],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners"
+      ]
+    },
+    {
+      "name": "AIDOL",
+      "live_url": "https://www.aidol0x.xyz",
+      "repo": null,
+      "contracts": [],
+      "sources": [
+        "https://app.vibestarter.xyz/vibeathon/winners",
+        "https://www.aidol0x.xyz"
+      ]
+    }
+  ],
+  "base": [
+    {
+      "name": "claw2claw",
+      "description": "P2P trading for OpenClaw AI bots via a Uniswap v4 hook order book, ENS identity, LI.FI routing",
+      "category": "defi/agents",
+      "live_url": "https://claw2claw.2bb.dev/",
+      "repo_host": "github",
+      "repo": "2bb-dev/claw2claw",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x9114Ff08A837d0F8F9db23234Bf99794131FC188",
+          "label": "Claw2ClawHook"
+        },
+        {
+          "chainId": 8453,
+          "address": "0xe5b4A4dF8387858852B861B36AB5B512d7838346",
+          "label": "SimpleSwapRouter"
+        }
+      ],
+      "sources": [
+        "https://ethglobal.com/showcase/claw2claw-3uxgx"
+      ]
+    },
+    {
+      "name": "Stream Vaults",
+      "description": "Stream USDC via Superfluid to a Ledger-signed DCA agent; per-user smart accounts",
+      "category": "defi/agents",
+      "live_url": "https://streams-vault.vercel.app/",
+      "repo_host": "github",
+      "repo": "JulioMCruz/Streams",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x773AfE133005Ab5780f3DD651D236Aa8f1363EEc",
+          "label": "StreamVaults (proxy)"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x0d05C398ad8989FEab4d67b2BC09FE9AaaCd5Cc5",
+          "label": "StreamVaultsConfig (proxy)"
+        }
+      ],
+      "sources": [
+        "https://ethglobal.com/showcase/stream-vaults-m9qz5"
+      ]
+    },
+    {
+      "name": "Void Tactics",
+      "description": "Fully onchain turn-based space-fleet tactics game (NFT ships)",
+      "category": "game",
+      "live_url": "https://void-tactics-fe-eth-ny-26.vercel.app/",
+      "repo_host": "github",
+      "repo": "briandoyle81/void-tactics-fe-eth-ny-26",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x00e4068255Abf416086f7bF6c507bc36B7a232E7",
+          "label": "game contract (Base Sepolia, listed on showcase page)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x1f341c690C5AaA61D06736AD67937385a76f1FE2",
+          "label": "game contract (Base Sepolia, listed on showcase page)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x5801c1303e13899FCbC6702b16B77183F1ddB8f4",
+          "label": "game contract (Base Sepolia, listed on showcase page)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x86161787160F5A54F1424B7F7119247352DE215e",
+          "label": "game contract (Base Sepolia, listed on showcase page)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0xAcEB0a35132a111BA3D3816c5EA6D62AeFa9a86A",
+          "label": "game contract (Base Sepolia, listed on showcase page)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0xD36B2D129fb48c488cA5cE00e2941995FB9C6D74",
+          "label": "game contract (Base Sepolia, listed on showcase page)"
+        }
+      ],
+      "sources": [
+        "https://ethglobal.com/showcase/void-tactics-ag25f"
+      ]
+    },
+    {
+      "name": "SAGE Protocol",
+      "description": "Uniswap v4 dynamic-fee hook driven by S&P stablecoin stability ratings",
+      "category": "defi",
+      "live_url": "https://sage-three-navy.vercel.app/",
+      "repo_host": "github",
+      "repo": "danelerr/sarm-protocol",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x444a4967487B655675c7F3EF0Ec68f93ae9f6866",
+          "label": "SSA oracle"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x828e95D79fC2fD10882C13042edDe1071BB2E080",
+          "label": "SAGE hook"
+        }
+      ],
+      "sources": [
+        "https://ethglobal.com/showcase/sage-protocol-tv19y"
+      ]
+    },
+    {
+      "name": "Chatter",
+      "description": "Pay $1 for keyword trend research briefs stored on ENS subnames; swap UI",
+      "category": "consumer/ai",
+      "live_url": "https://chatterethglobal.vercel.app/",
+      "repo_host": "github",
+      "repo": "kenjohnscreates/chatter",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://ethglobal.com/showcase/chatter-hczx1"
+      ]
+    },
+    {
+      "name": "KOLlateral",
+      "description": "Accountability terminal for crypto influencer calls; Follow/Fade trades via Uniswap on Base",
+      "category": "defi/social",
+      "live_url": "https://kollateral.vercel.app/",
+      "repo_host": "github",
+      "repo": "RomarioKavin1/kollateral",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://ethglobal.com/showcase/kollateral-ho1d1"
+      ]
+    },
+    {
+      "name": "MoltQore",
+      "description": "ERC-8004 AI-agent NFT portfolio manager across Base and Sui with a Uniswap v4 rebalancer hook",
+      "category": "defi/agents",
+      "live_url": "https://eth-global-hackmoney26-web.vercel.app/",
+      "repo_host": "github",
+      "repo": "Zireaelst/ETHGlobal-Hackmoney26",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0xbAD7056563F0b00C29c08FF06CA22aE94cC5fa1c",
+          "label": "DeepMindVault (ERC-8004 agent NFT)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0xdB045ac6bA8d7903fD3a566bFBf208955481dA49",
+          "label": "AgentRebalancerHook"
+        }
+      ],
+      "sources": [
+        "https://github.com/Zireaelst/ETHGlobal-Hackmoney26"
+      ]
+    },
+    {
+      "name": "tradewise (hackagent)",
+      "description": "Autonomous trading agent that sells shares of itself, with a KeeperHub dead-man's switch",
+      "category": "agents/defi",
+      "live_url": "https://hackagent-nine.vercel.app/",
+      "repo_host": "github",
+      "repo": "fritzschoff/hackagent",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x64D708f88bBA23BB4cA0D5063C5de97F0f89b519",
+          "label": "AgentShares (TRADE)"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x3B1Ae95aDA500e8B73dc153063F9F5C175e87268",
+          "label": "RevenueSplitter"
+        }
+      ],
+      "sources": [
+        "https://github.com/fritzschoff/hackagent"
+      ]
+    },
+    {
+      "name": "PrivatePay",
+      "description": "Stealth-address private payments (ECDH, EIP-5564), Base as primary chain",
+      "category": "payments/privacy",
+      "live_url": "https://private-pay-iqgp.vercel.app/",
+      "repo_host": "github",
+      "repo": "AmaanSayyad/Private-Pay-",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x71197e7a1CA5A2cb2AD82432B924F69B1E3dB123",
+          "label": "treasury (may be an EOA)"
+        }
+      ],
+      "sources": [
+        "https://github.com/AmaanSayyad/Private-Pay-"
+      ]
+    },
+    {
+      "name": "YieldMax.AI",
+      "description": "AgentKit AI yield optimizer across Morpho/Aave on Base",
+      "category": "defi/agents",
+      "live_url": "https://yieldmax-ai.vercel.app/",
+      "repo_host": "github",
+      "repo": "Pranav2456/ethglobal-agentic",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x90Cae48cEC3595Cd1A6a9D806679EEE50F364979",
+          "label": "YieldStrategyManager"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x9bBF97fE8CF3faE8d58915878c9C1eb1892C46F2",
+          "label": "MorphoBaseStrategy"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x9C80FE3Abc89d865Fe307707047D3d57414cD395",
+          "label": "AaveBaseStrategy"
+        }
+      ],
+      "sources": [
+        "https://github.com/Pranav2456/ethglobal-agentic"
+      ]
+    },
+    {
+      "name": "athl3te",
+      "description": "Web3 fitness tracker with AI coaching",
+      "category": "consumer",
+      "live_url": "https://athl3te.vercel.app/",
+      "repo_host": "github",
+      "repo": "imApoorva36/athl3te",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x34058be1ec2F67eFD9Fa351dAaDe5bA81f397cD3",
+          "label": "main contract (README links sepolia.basescan)"
+        }
+      ],
+      "sources": [
+        "https://github.com/imApoorva36/athl3te"
+      ]
+    },
+    {
+      "name": "BasedBills",
+      "description": "Group bill splitting with on-chain USDC settlement",
+      "category": "payments/consumer",
+      "live_url": "https://base-hackathon-based-bills.vercel.app/",
+      "repo_host": "github",
+      "repo": "CodeByNikolas/Base-Hackathon---BasedBills",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x97191494e97a71a2366e459f49e2c15b61fb4055",
+          "label": "GroupFactory"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x071164b35b896bc429d5f518c498695ffc69fe10",
+          "label": "Registry"
+        },
+        {
+          "chainId": 8453,
+          "address": "0xb2a71877fbd3ea1a21ae894c7299b6f0b625a8aa",
+          "label": "Group logic"
+        }
+      ],
+      "sources": [
+        "https://github.com/CodeByNikolas/Base-Hackathon---BasedBills"
+      ]
+    },
+    {
+      "name": "IsYourDayOk",
+      "description": "Mental-health check-in mini app with NFT achievements",
+      "category": "consumer/miniapp",
+      "live_url": "https://is-your-day-ok.vercel.app/",
+      "repo_host": "github",
+      "repo": "lynnmeanslight/IsYourDayOk",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xD7498664f74cF7437994C4E523C542761BA7d4a0",
+          "label": "IsYourDayOkNFT"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x364784cb19047B68066eEa63286AAd5EA49453C2",
+          "label": "Points contract"
+        }
+      ],
+      "sources": [
+        "https://github.com/lynnmeanslight/IsYourDayOk"
+      ]
+    },
+    {
+      "name": "BasePay",
+      "description": "USDC payments dApp: permit send, gasless relay, batch pay, escrow, subscriptions",
+      "category": "payments",
+      "live_url": "https://base-pay.replit.app/",
+      "repo_host": "github",
+      "repo": "osr21/basepay-dapp",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x2d7ba7ed34f8fa16fe4d0d11b51306dc753812c8",
+          "label": "BasePayRouter"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x82569caf7847040a03ad2c6545ade5af2bdcf47c",
+          "label": "BatchPay"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x5b3241a47acfda41f15dfd7260339e2a88d52318",
+          "label": "Escrow"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x546093b0476b4b7909cd84f3a0fef813c421d14a",
+          "label": "SubscriptionManager"
+        }
+      ],
+      "sources": [
+        "https://github.com/osr21/basepay-dapp"
+      ]
+    },
+    {
+      "name": "Base Smart Profiler",
+      "description": "Dashboard comparing Smart Wallet vs EOA behaviour on Base, plus a gasless soulbound receipt mint",
+      "category": "analytics",
+      "live_url": "https://base-smart-profiler.vercel.app/",
+      "repo_host": "github",
+      "repo": "Makabeez/base-smart-profiler",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x3F9F8222D7c3D3363A9394BD51d2c6B17e772413",
+          "label": "AnalysisReceipt (soulbound ERC-721)"
+        }
+      ],
+      "sources": [
+        "https://github.com/Makabeez/base-smart-profiler"
+      ]
+    },
+    {
+      "name": "ShadowKey",
+      "description": "Human-controlled privacy vault scoping AI-agent access to secrets, with EAS attestations",
+      "category": "agents/privacy",
+      "live_url": "https://shadowkey-ai.vercel.app/",
+      "repo_host": "github",
+      "repo": "kimboltpro3-create/shadowkey",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xC739f98B438620A9326Ddb7548201Bcd78a3DBAd",
+          "label": "ShadowVault"
+        }
+      ],
+      "sources": [
+        "https://github.com/kimboltpro3-create/shadowkey"
+      ]
+    },
+    {
+      "name": "CampusCoin",
+      "description": "Student textbook marketplace: NFTs plus escrow with proof of delivery (mini app)",
+      "category": "consumer/miniapp",
+      "live_url": "https://base-batches-miniapp-cc.vercel.app/",
+      "repo_host": "github",
+      "repo": "MarxMad/BaseBatches-MiniappCC",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/MarxMad/BaseBatches-MiniappCC"
+      ]
+    },
+    {
+      "name": "Gorilla Counter",
+      "description": "Onchain chest-beating counter game with Basenames leaderboard (mini app)",
+      "category": "game/miniapp",
+      "live_url": "https://gorilla-counter.vercel.app/",
+      "repo_host": "github",
+      "repo": "gorillachimps/gorilla-counter",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x90fc6B668293Bc2d9Ce78eC6E1c2d0d2c00EE668",
+          "label": "GorillaCounter"
+        }
+      ],
+      "sources": [
+        "https://github.com/gorillachimps/gorilla-counter"
+      ]
+    },
+    {
+      "name": "Capybara Petter",
+      "description": "Onchain capybara-petting game with leaderboard and paymaster-sponsored gas (mini app)",
+      "category": "game/miniapp",
+      "live_url": "https://capybara-petter.vercel.app/",
+      "repo_host": "github",
+      "repo": "gorillachimps/capybara-petter",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xe09C6b3A7390Fc24A3E07AcEF9C31AaDb883a9Ba",
+          "label": "CapybaraPetter"
+        }
+      ],
+      "sources": [
+        "https://github.com/gorillachimps/capybara-petter"
+      ]
+    },
+    {
+      "name": "Pool Mini",
+      "description": "Group funding pools and token giveaways inside Farcaster",
+      "category": "social/payments/miniapp",
+      "live_url": "https://pool-mini.vercel.app/",
+      "repo_host": "github",
+      "repo": "Pool-Escrow/pool-mini-app",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xA2cD9Ccd89C3c8760A701DaDD11174393443E495",
+          "label": "Pool.sol"
+        }
+      ],
+      "sources": [
+        "https://github.com/Pool-Escrow/pool-mini-app"
+      ]
+    },
+    {
+      "name": "Tap That Mosquito",
+      "description": "Pixel-art tapping game with achievement NFTs and versus mode (mini app)",
+      "category": "game/miniapp",
+      "live_url": "https://tap-mosquito.vercel.app/",
+      "repo_host": "github",
+      "repo": "unclekaldoteth/tap-mosquitos",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/unclekaldoteth/tap-mosquitos"
+      ]
+    },
+    {
+      "name": "TouchBase",
+      "description": "Anonymous venting and kindness-points mental-health mini app",
+      "category": "social/miniapp",
+      "live_url": "https://touch-base-delta.vercel.app/",
+      "repo_host": "github",
+      "repo": "elbowfox/touch-base",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/elbowfox/touch-base"
+      ]
+    },
+    {
+      "name": "Base Streak Arena",
+      "description": "Daily streak/XP leaderboard mini app",
+      "category": "game/miniapp",
+      "live_url": "https://base-streak-arena.vercel.app/",
+      "repo_host": "github",
+      "repo": "ulsreall/base-streak-arena",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/ulsreall/base-streak-arena"
+      ]
+    },
+    {
+      "name": "Donate Ronin",
+      "description": "One-tap ETH donation mini app (OnchainKit)",
+      "category": "payments/miniapp",
+      "live_url": "https://donate-app-lac.vercel.app/",
+      "repo_host": "github",
+      "repo": "RoninBuild/donate-app",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/RoninBuild/donate-app"
+      ]
+    },
+    {
+      "name": "MyOpini Quiz",
+      "description": "Real-time multiplayer crypto quiz battles with on-chain results",
+      "category": "game/miniapp",
+      "live_url": "https://myopini.vercel.app/",
+      "repo_host": "github",
+      "repo": "nainasachdev10/MyOpini_quiz",
+      "default_branch": "master",
+      "contracts": [
+        {
+          "chainId": 84532,
+          "address": "0x2905fcb25b64e5AD092967410043E35746C7f697",
+          "label": "quiz contract (Base Sepolia)"
+        }
+      ],
+      "sources": [
+        "https://github.com/nainasachdev10/MyOpini_quiz"
+      ]
+    },
+    {
+      "name": "Anons DAO",
+      "description": "Agent-native Nouns fork with 12-hour auctions gated by ERC-8004 registration",
+      "category": "dao/agents",
+      "live_url": "https://anons-dao.vercel.app/",
+      "repo_host": "github",
+      "repo": "ClawdiaETH/anons-dao",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/ClawdiaETH/anons-dao"
+      ]
+    },
+    {
+      "name": "B20 Launcher",
+      "description": "Non-custodial launcher for Base-native B20 assets/stablecoins with an x402 agent API",
+      "category": "tokens/infra",
+      "live_url": "https://b20launcher.rakibhq.xyz/",
+      "repo_host": "github",
+      "repo": "0xmdrakib/B20Launcher",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/0xmdrakib/B20Launcher"
+      ]
+    },
+    {
+      "name": "CodeTrack",
+      "description": "Analytics dashboard for ERC-8021 Builder Codes on Base",
+      "category": "analytics",
+      "live_url": "https://codetrack-phi.vercel.app/",
+      "repo_host": "github",
+      "repo": "memosr/codetrack",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/memosr/codetrack"
+      ]
+    },
+    {
+      "name": "Shellsino",
+      "description": "PvP casino for AI agents ($SHELL bets, $HOUSE house staking)",
+      "category": "game/agents",
+      "live_url": "https://team-shellsino.vercel.app/",
+      "repo_host": "github",
+      "repo": "openwork-hackathon/team-shellsino",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xcfAD33C1188635B22BA97a7caBCF5bEd02fAe466",
+          "label": "$SHELL token"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x759a72ea84e5cc7f04a59830ec8a824b036bfc8b",
+          "label": "$HOUSE token (45-byte clone)"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x25B19C2634A2F8338D5a1821F96AF339A5066fbE",
+          "label": "Coinflip V3"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x1BB36A7BdF4eAa8321bbB177EaFc1cf26c7E573f",
+          "label": "HouseBankroll"
+        }
+      ],
+      "sources": [
+        "https://github.com/openwork-hackathon/team-shellsino"
+      ]
+    },
+    {
+      "name": "Coal",
+      "description": "Checkout and payments for humans and AI agents (x402 + OKX APP), USDC on Base, receipts on 0G",
+      "category": "payments/agents",
+      "live_url": "https://www.usecoal.xyz/",
+      "repo_host": "github",
+      "repo": "emmanuel39hanks/coal",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/emmanuel39hanks/coal"
+      ]
+    },
+    {
+      "name": "Vouch402",
+      "description": "x402-metered on-chain risk intelligence for agents with EAS fulfilment attestations",
+      "category": "agents/infra",
+      "live_url": "https://www.vouch402.xyz/",
+      "repo_host": "github",
+      "repo": "Eras256/Vouchx402",
+      "default_branch": "master",
+      "contracts": [],
+      "sources": [
+        "https://github.com/Eras256/Vouchx402"
+      ]
+    },
+    {
+      "name": "x402ai",
+      "description": "Payment-gated AI inference microservices via x402 on Base mainnet",
+      "category": "agents/infra",
+      "live_url": "https://x402ai.dev/",
+      "repo_host": "github",
+      "repo": "ukenal/x402ai",
+      "default_branch": "main",
+      "contracts": [],
+      "sources": [
+        "https://github.com/ukenal/x402ai"
+      ]
+    },
+    {
+      "name": "NewsRiver Intelligence",
+      "description": "News-intelligence agent with x402 micropayments, ERC-8183 job escrow, ERC-8004 identity",
+      "category": "agents",
+      "live_url": "https://showcase.yieldcircle.app/",
+      "repo_host": "github",
+      "repo": "BidurS/newsriver-showcase",
+      "default_branch": "master",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xf24225e6bcd8805c3664b3ffe84da8ba610dfca2",
+          "label": "ERC-8183 AgenticCommerce"
+        }
+      ],
+      "sources": [
+        "https://github.com/BidurS/newsriver-showcase"
+      ]
+    },
+    {
+      "name": "Vibestarter",
+      "description": "Time-released on-chain crowdfunding for vibecoded apps (host of Vibeathon)",
+      "category": "launchpad/crowdfunding",
+      "live_url": "https://app.vibestarter.xyz/",
+      "repo_host": "github",
+      "repo": "vibesprotocol/vibestarter-contracts",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x783a7DB4113DC35A87dA43319af3cA7E6428f4BC",
+          "label": "VibesLaunchRouterV2"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x36C7e2d87F4E2d33b70304EbaA81eE88CB04Bf86",
+          "label": "VibesTranchEscrowFactory"
+        },
+        {
+          "chainId": 8453,
+          "address": "0xcBe7e9E13576838eb4B55d0793Fd1CFFC1Dea43d",
+          "label": "VibesTranchEscrow (implementation)"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x66b74176F53d3081a87F75e10aD6cF554174Aef9",
+          "label": "VibesRegistry"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x3671DBD5CFaF1D0D5c15a18b65F2CC7AcC7faE29",
+          "label": "VibesTokenFactory"
+        },
+        {
+          "chainId": 8453,
+          "address": "0xefFC8815487084a97edfdfF968b56Ea123421Acb",
+          "label": "$VIBES token"
+        }
+      ],
+      "sources": [
+        "https://app.vibestarter.xyz/api/contracts.json"
+      ]
+    },
+    {
+      "name": "Uniswap Interface",
+      "description": "Uniswap web app (multichain incl. Base)",
+      "category": "dex/reference",
+      "live_url": "https://app.uniswap.org/",
+      "repo_host": "github",
+      "repo": "Uniswap/interface",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+          "label": "UniswapV3Factory"
+        }
+      ],
+      "reference": true,
+      "sources": [
+        "https://github.com/Uniswap/interface"
+      ]
+    },
+    {
+      "name": "Aave Interface",
+      "description": "Aave v3 web app (Base market)",
+      "category": "lending/reference",
+      "live_url": "https://app.aave.com/",
+      "repo_host": "github",
+      "repo": "aave/interface",
+      "default_branch": "main",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+          "label": "Aave v3 Pool (proxy)"
+        }
+      ],
+      "reference": true,
+      "sources": [
+        "https://github.com/aave/interface"
+      ]
+    },
+    {
+      "name": "CoW Swap",
+      "description": "CoW Protocol intent-based DEX frontend (supports Base)",
+      "category": "dex/reference",
+      "live_url": "https://swap.cow.fi/",
+      "repo_host": "github",
+      "repo": "cowprotocol/cowswap",
+      "default_branch": "develop",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+          "label": "GPv2Settlement"
+        }
+      ],
+      "reference": true,
+      "sources": [
+        "https://github.com/cowprotocol/cowswap"
+      ]
+    },
+    {
+      "name": "Safe{Wallet}",
+      "description": "Safe multisig web app (supports Base)",
+      "category": "wallet/reference",
+      "live_url": "https://app.safe.global/",
+      "repo_host": "github",
+      "repo": "safe-global/safe-wallet-monorepo",
+      "default_branch": "dev",
+      "contracts": [
+        {
+          "chainId": 8453,
+          "address": "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67",
+          "label": "SafeProxyFactory v1.4.1"
+        }
+      ],
+      "reference": true,
+      "sources": [
+        "https://github.com/safe-global/safe-wallet-monorepo"
+      ]
+    },
+    {
+      "name": "Revoke.cash",
+      "description": "Token-approval revocation tool (supports Base); small open-source team",
+      "category": "security/reference",
+      "live_url": "https://revoke.cash/",
+      "repo_host": "github",
+      "repo": "RevokeCash/revoke.cash",
+      "default_branch": "master",
+      "contracts": [],
+      "reference": true,
+      "sources": [
+        "https://github.com/RevokeCash/revoke.cash"
+      ]
+    },
+    {
+      "name": "base.org",
+      "description": "Base's own site and Basenames UI",
+      "category": "infra/reference",
+      "live_url": "https://www.base.org/",
+      "repo_host": "github",
+      "repo": "base/web",
+      "default_branch": "master",
+      "contracts": [],
+      "reference": true,
+      "sources": [
+        "https://github.com/base/web"
+      ]
+    },
+    {
+      "name": "Blockscout (Base)",
+      "description": "Open-source block explorer frontend serving base.blockscout.com",
+      "category": "explorer/reference",
+      "live_url": "https://base.blockscout.com/",
+      "repo_host": "github",
+      "repo": "blockscout/frontend",
+      "default_branch": "main",
+      "contracts": [],
+      "reference": true,
+      "sources": [
+        "https://github.com/blockscout/frontend"
+      ]
+    },
+    {
+      "name": "Nouns Builder",
+      "description": "DAO builder app (supports Base)",
+      "category": "dao/reference",
+      "live_url": "https://nouns.build/",
+      "repo_host": "github",
+      "repo": "ourzora/nouns-builder",
+      "default_branch": "staging",
+      "contracts": [],
+      "reference": true,
+      "sources": [
+        "https://github.com/ourzora/nouns-builder"
+      ]
+    }
+  ]
+}

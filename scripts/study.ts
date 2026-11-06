@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { loadEnv, ROOT } from './_backfill';
+import { loadEnv, ROOT, dataDir } from './_backfill';
 import {
   BASIS, COHORTS, HEADLINE_TEMPLATES, V01_RESULTS_DATE, cohortOf, commitVsShip, daysBetween, fieldSummary, fillTemplate,
   projectMetrics, windowStart, type Cohort, type NightLite, type ProjectMetrics,
@@ -9,7 +9,8 @@ import {
 
 loadEnv();
 
-const PROBE = path.resolve(ROOT, '../research/probe-2026-11-06.json');
+// data/probe-2026-11-06.json by default; --data <dir> reads <dir>/probe-2026-11-06.json
+const PROBE = path.join(dataDir(), 'probe-2026-11-06.json');
 const out = (name: string, v: unknown) => {
   fs.mkdirSync(path.join(ROOT, 'results'), { recursive: true });
   fs.writeFileSync(path.join(ROOT, 'results', name), JSON.stringify(v, null, 2) + '\n');

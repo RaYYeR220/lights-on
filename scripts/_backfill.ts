@@ -14,6 +14,11 @@ export function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 export const flag = (name: string) => process.argv.includes(`--${name}`);
+
+/** Input data shipped with the repo (`data/`: public project info and the 2026-11-06 probe); `--data <dir>` overrides. */
+export function dataDir(): string {
+  return path.resolve(arg('data') ?? path.join(ROOT, 'data'));
+}
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export function daysArg(def = 90): number {
