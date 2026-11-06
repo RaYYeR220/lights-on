@@ -142,7 +142,7 @@ export async function buildBriefing(input: BriefingInput, deps: BriefingDeps = {
 /** Briefing inputs for a set of project ids and one night ('yyyy-mm-dd'); observed nights only, hidden projects skipped. */
 export async function gatherBriefingProjects(db: Db, projectIds: number[], night: string, now: Date): Promise<BriefingProject[]> {
   const ids = [...new Set(projectIds)];
-  const projs = (await getProjectsByIds(db, ids)).filter((p) => !p.hidden).sort((a, b) => a.id - b.id);
+  const projs = (await getProjectsByIds(db, ids)).filter((p) => !p.hidden && p.source !== 'community').sort((a, b) => a.id - b.id);
   if (projs.length === 0) return [];
   const from = new Date(Date.parse(`${night}T00:00:00Z`) - 31 * 86_400_000).toISOString().slice(0, 10);
   const rows = (await getNightsForProjects(db, projs.map((p) => p.id), from)).filter((r) => r.observed);
