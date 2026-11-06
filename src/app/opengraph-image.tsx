@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import { getDb } from "@/lib/db";
 import { getTowerData } from "@/lib/views/tower";
+import { cached } from "@/lib/apiCache";
 import { towerSvg } from "@/lib/og/towerSvg";
 
 export const alt = "Lights On: know by morning if they're still shipping.";
@@ -21,7 +22,7 @@ async function clash(): Promise<ArrayBuffer | null> {
 }
 
 export default async function OpengraphImage() {
-  const [data, font] = await Promise.all([getTowerData(await getDb()).catch(() => null), clash()]);
+  const [data, font] = await Promise.all([cached("tower", async () => getTowerData(await getDb())).catch(() => null), clash()]);
   const projects = data?.projects ?? [];
   const svg = towerSvg(projects, { width: 1200, height: 250, cols: 12, rows: 3 });
   const src = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;

@@ -72,7 +72,24 @@ describe('read tools', () => {
     expect(rec).toMatchObject({ status: 'quiet', statusSource: 'reconstructed', confirmedAt: null });
     const h = await listProjects(db, { history: true }, NOW);
     expect(h.projects[0].history).toHaveLength(90);
-    expect(h.projects[0].history!.slice(-3)).toEqual(['building', 'shipped', null]) // oldest first, last entry = today;
+    expect(h.projects[0].history!.slice(-3)).toBe('BS.'); // oldest first, last letter = today
+    expect(h.projects[1].history!.slice(-2)).toBe('Q.'); // reconstructed nights count too
+    expect(h.projects[0].history!.slice(0, -3)).toMatch(/^\.+$/);
+  });
+
+  it('digest: the observed row wins per night, the head is the latest observed night even before a newer reconstructed one', async () => {
+    const p = await upsertProject(db, { slug: 'mixed', name: 'Mixed', source: 'base' });
+    await insertNight(db, { projectId: p.id, night: '2026-11-03', status: 'shipped', observed: false });
+    await insertNight(db, { projectId: p.id, night: '2026-11-03', status: 'quiet', observed: true, summary: 'obs' });
+    await insertNight(db, { projectId: p.id, night: '2026-11-04', status: 'building', observed: true, summary: 'head', attestationUid: '0xh' });
+    await insertNight(db, { projectId: p.id, night: '2026-11-05', status: 'shipped', observed: false });
+    const l = await listProjects(db, { history: true }, NOW);
+    const m = l.projects.find((x) => x.slug === 'mixed')!;
+    expect(m.history!.slice(-4)).toBe('QBS.');
+    expect(m).toMatchObject({ status: 'building', summary: 'head', record: { lastShip: 20261105 } });
+    expect(m).not.toHaveProperty('statusSource');
+    const s2 = await isStillShipping(db, 'mixed', NOW);
+    expect(s2).toMatchObject({ status: 'building', lastNight: 20261104, attestationUid: '0xh' });
   });
 
   it('getProject / getNight / getProjectNights', async () => {

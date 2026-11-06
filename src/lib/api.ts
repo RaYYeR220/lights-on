@@ -21,6 +21,21 @@ export function fail(e: unknown): Response {
   return json({ error: 'internal' }, 500, CORS);
 }
 
+/**
+ * The CDN caches by full URL, so `?x=<random>` would reach the function (and the database) every time. A request whose
+ * query is not exactly the canonical one (known params only, fixed order and form) gets a cacheable 308 to it instead;
+ * the redirect itself costs no database read.
+ */
+export function canonicalRedirect(req: Request, query: [string, string][]): Response | null {
+  const u = new URL(req.url);
+  const canon = query.length ? `?${query.map(([k, v]) => `${k}=${v}`).join('&')}` : '';
+  if (u.search === canon) return null;
+  return new Response(null, {
+    status: 308,
+    headers: { ...CORS, location: `${u.pathname}${canon}`, 'cache-control': 'public, s-maxage=86400' },
+  });
+}
+
 export const preflight = (): Response => new Response(null, { status: 204, headers: { ...CORS, 'access-control-max-age': '86400' } });
 
 /** yyyymmdd query param -> number; undefined when absent; ToolError(bad_request) when malformed. */

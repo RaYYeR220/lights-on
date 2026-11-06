@@ -2,8 +2,9 @@ import { getAddress, isAddress } from 'viem';
 import { z } from 'zod';
 import type { Db } from '@/lib/db';
 import {
-  countWatches, deleteProjectById, getNights, getNightStatuses, getProjectByLiveUrl, getProjectBySlug, getTranches,
-  insertProjectIfNew, listListedProjects, unhideWatchProject, type NightStatusRow,
+  LETTER_STATUS, countWatches, deleteProjectById, getLeanNights, getNightDigests, getNights, getProjectByLiveUrl,
+  getProjectBySlug, getTranches, insertProjectIfNew, listListedProjectCards, unhideWatchProject,
+  type LeanNightRow, type NightDigest,
 } from '@/lib/db/queries';
 import type { NightRow, ProjectRow } from '@/lib/db/schema';
 import { safeFetch, type SafeFetchResult } from '@/lib/net/safeFetch';
@@ -18,13 +19,9 @@ import { computeRecord } from '@/lib/shift/rules';
 import { siteUrl } from '@/lib/site';
 import type { Record30, Status } from '@/lib/types';
 
-/** Fixed error code + HTTP status; the only error type tool handlers throw on purpose. */
-export class ToolError extends Error {
-  constructor(public code: string, public status: number, public retryAfterSec?: number) {
-    super(code);
-    this.name = 'ToolError';
-  }
-}
+import { ToolError } from './errors';
+
+export { ToolError };
 
 export const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const DAY_MS = 86_400_000;
@@ -51,39 +48,43 @@ async function visibleProject(db: Db, slug: string): Promise<ProjectRow> {
   return p;
 }
 
-interface Picked { night: number; status: Status; observed: boolean; row: NightStatusRow }
+type Digest = NightDigest | undefined;
 
-/** Per night, the observed row wins over a reconstructed one. Rows come oldest first. */
-function pickNights(rows: NightStatusRow[]): Picked[] {
-  const by = new Map<string, NightStatusRow>();
-  for (const r of rows) {
-    const cur = by.get(r.night);
-    if (!cur || (r.observed && !cur.observed)) by.set(r.night, r);
+/** Digest letters (one per night from `from`) -> the nights that have a status, oldest first. */
+function decodeNights(codes: string, from: string): { night: number; status: Status }[] {
+  const base = dayNumber(nightOf(from));
+  const out: { night: number; status: Status }[] = [];
+  for (let i = 0; i < codes.length; i++) {
+    const st = LETTER_STATUS[codes[i]];
+    if (st) out.push({ night: fromDayNumber(base + i), status: st });
   }
-  return [...by.values()].sort((a, b) => (a.night < b.night ? -1 : 1)).map((r) => ({ night: nightOf(r.night), status: r.status, observed: r.observed, row: r }));
+  return out;
 }
 
-function summarise(picked: Picked[], now: Date) {
-  const record: Record30 = computeRecord(picked.map((p) => ({ night: p.night, status: p.status })), nightNumber(now));
-  // Headline status: the latest observed night; only without any, the latest reconstructed one.
-  const observed = [...picked].reverse().find((p) => p.observed);
-  const head = observed ?? picked[picked.length - 1] ?? null;
-  return { record, head, observed: !!observed };
+/** Record over the digest; head = latest observed night, only without any the latest reconstructed one. */
+function summarise(d: Digest, from: string, now: Date) {
+  const record: Record30 = computeRecord(decodeNights(d?.codes ?? '', from), nightNumber(now));
+  const head = d?.head ?? null;
+  return { record, head, observed: !!head?.observed };
 }
 
-const reasonsOf = (signals: unknown): string[] => {
-  const r = (signals as { reasons?: unknown } | null)?.reasons;
-  return Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : [];
-};
+async function digests(db: Db, ids: number[], now: Date): Promise<{ from: string; by: Map<number, NightDigest> }> {
+  const from = daysBack(now, RECORD_DAYS);
+  const list = await getNightDigests(db, ids, from, nightDate(nightNumber(now)));
+  return { from, by: new Map(list.map((d) => [d.projectId, d])) };
+}
+
+const reasonList = (r: unknown): string[] => (Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : []);
 
 const evidenceUri = (hash: string | null) => (hash ? `${siteUrl()}/api/v1/evidence/${hash}` : null);
 
-function nightView(r: NightRow) {
+type NightFields = Pick<LeanNightRow, 'night' | 'observed' | 'status' | 'summary' | 'evidenceHash' | 'attestationUid' | 'attestTx'>;
+function nightView(r: NightFields, reasons: unknown) {
   return {
     night: nightOf(r.night),
     observed: r.observed,
     status: r.status,
-    reasons: reasonsOf(r.signals),
+    reasons: reasonList(reasons),
     summary: r.summary,
     evidenceHash: r.evidenceHash,
     evidenceUri: evidenceUri(r.evidenceHash),
@@ -91,37 +92,34 @@ function nightView(r: NightRow) {
     attestTx: r.attestTx,
   };
 }
+const fullNightView = (r: NightRow) => nightView(r, (r.signals as { reasons?: unknown } | null)?.reasons);
 
 // ---- read tools ----
 
+/**
+ * `history`: the last 90 nights as one 90-letter string, oldest first, the last letter = today (UTC):
+ * S shipped, B building, Q quiet, D down, U unavailable, '.' no night. (Was an array of 90 status strings: 10x the bytes.)
+ */
+export const HISTORY_LEGEND = 'S shipped, B building, Q quiet, D down, U unavailable, . no night';
+
 export async function listProjects(db: Db, opts: { history?: boolean } = {}, now: Date = new Date()) {
-  const projs = await listListedProjects(db); // community watches are unlisted
-  const rows = await getNightStatuses(db, projs.map((p) => p.id), daysBack(now, RECORD_DAYS));
-  const byProject = new Map<number, NightStatusRow[]>();
-  for (const r of rows) {
-    const l = byProject.get(r.projectId);
-    if (l) l.push(r);
-    else byProject.set(r.projectId, [r]);
-  }
-  const today = dayNumber(nightNumber(now));
+  const projs = await listListedProjectCards(db); // community watches are unlisted
+  const { from, by } = await digests(db, projs.map((p) => p.id), now);
   return {
     generatedAt: now.toISOString(),
     projects: projs.map((p) => {
-      const picked = pickNights(byProject.get(p.id) ?? []);
-      const { record, head, observed } = summarise(picked, now);
-      const out: Record<string, unknown> = {
+      const d = by.get(p.id);
+      const { record, head, observed } = summarise(d, from, now);
+      const out: ProjectListItem = {
         slug: p.slug, name: p.name, tagline: p.tagline, source: p.source, bay: p.bay,
         status: head?.status ?? null,
-        ...(head && !observed ? { statusSource: 'reconstructed' } : {}),
-        confirmedAt: observed && head ? head.row.createdAt.toISOString() : null,
-        summary: observed && head ? head.row.summary : null,
+        ...(head && !observed ? { statusSource: 'reconstructed' as const } : {}),
+        confirmedAt: observed && head ? head.createdAt.toISOString() : null,
+        summary: observed && head ? head.summary : null,
         record,
       };
-      if (opts.history) {
-        const byNight = new Map(picked.map((x) => [dayNumber(x.night), x.status]));
-        out.history = Array.from({ length: HISTORY_DAYS }, (_, i) => byNight.get(today - (HISTORY_DAYS - 1 - i)) ?? null);
-      }
-      return out as unknown as ProjectListItem;
+      if (opts.history) out.history = (d?.codes ?? '').padStart(HISTORY_DAYS, '.').slice(-HISTORY_DAYS);
+      return out;
     }),
   };
 }
@@ -129,18 +127,18 @@ export async function listProjects(db: Db, opts: { history?: boolean } = {}, now
 export interface ProjectListItem {
   slug: string; name: string; tagline: string | null; source: ProjectRow['source']; bay: number | null;
   status: Status | null; statusSource?: 'reconstructed'; confirmedAt: string | null; summary: string | null;
-  record: Record30; history?: (Status | null)[];
+  record: Record30;
+  /** 90 letters, oldest first, last = today: see HISTORY_LEGEND. */
+  history?: string;
 }
 
 export async function getProject(db: Db, slug: string, now: Date = new Date()) {
   const p = await visibleProject(db, slug);
-  const rows = await getNights(db, p.id, { from: daysBack(now, RECORD_DAYS) });
-  const picked = pickNights(rows.map((r) => ({
-    projectId: r.projectId, night: r.night, status: r.status, observed: r.observed, summary: r.summary,
-    createdAt: r.createdAt, evidenceHash: r.evidenceHash, attestationUid: r.attestationUid,
-  })));
-  const { record, head, observed } = summarise(picked, now);
-  const headRow = head ? rows.find((r) => r.night === head.row.night && r.observed === head.observed) ?? null : null;
+  const { from, by } = await digests(db, [p.id], now);
+  const { record, head, observed } = summarise(by.get(p.id), from, now);
+  const headRow = head
+    ? (await getNights(db, p.id, { from: head.night, to: head.night })).find((r) => r.observed === head.observed) ?? null
+    : null;
 
   let vibestarter: unknown = null;
   if (p.vibestarter) {
@@ -167,7 +165,7 @@ export async function getProject(db: Db, slug: string, now: Date = new Date()) {
     status: head?.status ?? null,
     ...(head && !observed ? { statusSource: 'reconstructed' as const } : {}),
     record,
-    latestNight: headRow ? nightView(headRow) : null,
+    latestNight: headRow ? fullNightView(headRow) : null,
     vibestarter,
   };
 }
@@ -175,10 +173,10 @@ export async function getProject(db: Db, slug: string, now: Date = new Date()) {
 export async function getNight(db: Db, slug: string, night: number) {
   const p = await visibleProject(db, slug);
   if (!validNight(night)) throw new ToolError('bad_request', 400);
-  const rows = await getNights(db, p.id, { from: nightDate(night), to: nightDate(night) });
+  const rows = await getLeanNights(db, p.id, nightDate(night), nightDate(night));
   const row = rows.find((r) => r.observed) ?? rows[0];
   if (!row) throw new ToolError('night_not_found', 404);
-  return { slug: p.slug, ...nightView(row) };
+  return { slug: p.slug, ...nightView(row, row.reasons) };
 }
 
 export async function getProjectNights(
@@ -189,23 +187,22 @@ export async function getProjectNights(
   const from = range.from ?? fromDayNumber(dayNumber(to) - (HISTORY_DAYS - 1));
   if (!validNight(to) || !validNight(from) || from > to) throw new ToolError('bad_request', 400);
   const fromClamped = Math.max(from, fromDayNumber(dayNumber(to) - (MAX_RANGE_DAYS - 1)));
-  const rows = await getNights(db, p.id, { from: nightDate(fromClamped), to: nightDate(to) });
-  return { slug: p.slug, from: fromClamped, to, nights: rows.map(nightView) };
+  const rows = await getLeanNights(db, p.id, nightDate(fromClamped), nightDate(to));
+  return { slug: p.slug, from: fromClamped, to, nights: rows.map((r) => nightView(r, r.reasons)) };
 }
 
 export async function isStillShipping(db: Db, slug: string, now: Date = new Date()) {
   const p = await visibleProject(db, slug);
-  const rows = await getNightStatuses(db, [p.id], daysBack(now, RECORD_DAYS));
-  const picked = pickNights(rows);
-  const { record, head } = summarise(picked, now);
+  const { from, by } = await digests(db, [p.id], now);
+  const { record, head } = summarise(by.get(p.id), from, now);
   return {
     slug: p.slug,
     status: head?.status ?? null,
     streak: record.streak,
     lit30: record.lit30,
     lastShip: record.lastShip,
-    lastNight: head?.night ?? null,
-    attestationUid: head?.row.attestationUid ?? null,
+    lastNight: head ? nightOf(head.night) : null,
+    attestationUid: head?.attestationUid ?? null,
     verifiedBy: VERIFIED_BY,
     schemaUid: schemaUid(),
   };

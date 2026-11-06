@@ -61,7 +61,7 @@ export function GET(): Response {
           parameters: [{
             name: 'with', in: 'query', required: false, style: 'form', explode: false,
             schema: { type: 'array', items: { type: 'string', enum: ['lastNight', 'history'] } },
-            description: 'lastNight fields are always included. history adds 90 daily statuses (oldest first, last = today, null = no night).',
+            description: 'lastNight fields are always included. history adds the last 90 nights as one 90-letter string (oldest first, last = today, UTC): S shipped, B building, Q quiet, D down, U unavailable, . no night. Other query params are answered with a 308 to the canonical URL.',
           }],
           responses: {
             200: {
@@ -85,7 +85,10 @@ export function GET(): Response {
                         confirmedAt: { type: ['string', 'null'], format: 'date-time', description: 'When the latest observed night was recorded' },
                         summary: { type: ['string', 'null'] },
                         record,
-                        history: { type: 'array', minItems: 90, maxItems: 90, items: nullableStatus },
+                        history: {
+                          type: 'string', minLength: 90, maxLength: 90, pattern: '^[SBQDU.]{90}$',
+                          description: 'Present with ?with=history. Oldest first, last letter = today (UTC): S shipped, B building, Q quiet, D down, U unavailable, . no night',
+                        },
                       },
                     },
                   },

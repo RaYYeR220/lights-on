@@ -638,22 +638,96 @@ export async function getLatestFinishedNightly(db: Db): Promise<ShiftRow | null>
 
 // ---- open surfaces (REST / MCP) ----
 
-export interface NightStatusRow {
-  projectId: number; night: string; status: NightRow['status']; observed: boolean;
-  summary: string | null; createdAt: Date; evidenceHash: string | null; attestationUid: string | null;
+/** One letter per status in compact payloads; '.' = no night recorded. */
+export const STATUS_LETTER: Record<NightRow['status'], string> = { shipped: 'S', building: 'B', quiet: 'Q', down: 'D', unavailable: 'U' };
+export const LETTER_STATUS: Record<string, NightRow['status']> = { S: 'shipped', B: 'building', Q: 'quiet', D: 'down', U: 'unavailable' };
+
+export interface NightDigest {
+  projectId: number;
+  /** One letter per night from `from` to `to` inclusive, oldest first (observed row wins over reconstructed); '.' = none. */
+  codes: string;
+  /** The headline night: latest observed, else latest reconstructed; null without any row in range. */
+  head: {
+    night: string; observed: boolean; status: NightRow['status']; summary: string | null; createdAt: Date;
+    evidenceHash: string | null; attestationUid: string | null;
+  } | null;
 }
 
-/** Lean per-night rows (no signals/notable) of several projects from `from` on, oldest first. */
-export async function getNightStatuses(db: Db, ids: number[], from: string): Promise<NightStatusRow[]> {
-  if (ids.length === 0) return [];
+/**
+ * Per project, the nights of [from, to] reduced in SQL to a status string plus the head row's few fields: one small row
+ * per project instead of every night row (a list call used to pull ~1 MB of rows over Neon HTTP).
+ */
+export async function getNightDigests(db: Db, ids: number[], from: string, to: string): Promise<NightDigest[]> {
+  const uniq = [...new Set(ids)];
+  if (uniq.length === 0) return [];
+  const idArr = sql`ARRAY[${sql.join(uniq.map((i) => sql`${i}::int`), sql`, `)}]`;
+  const res = await db.execute(sql`
+    WITH ids AS (SELECT unnest(${idArr}) AS id),
+    days AS (SELECT g::date AS night FROM generate_series(${from}::date, ${to}::date, interval '1 day') AS g),
+    picked AS (
+      SELECT DISTINCT ON (n.project_id, n.night) n.project_id, n.night, n.status, n.observed
+      FROM nights n
+      WHERE n.project_id IN (SELECT id FROM ids) AND n.night >= ${from}::date AND n.night <= ${to}::date
+      ORDER BY n.project_id, n.night, n.observed DESC
+    ),
+    head AS (
+      SELECT DISTINCT ON (project_id) project_id, night, observed FROM picked ORDER BY project_id, observed DESC, night DESC
+    ),
+    codes AS (
+      SELECT ids.id AS project_id,
+        string_agg(CASE pk.status WHEN 'shipped' THEN 'S' WHEN 'building' THEN 'B' WHEN 'quiet' THEN 'Q'
+          WHEN 'down' THEN 'D' WHEN 'unavailable' THEN 'U' ELSE '.' END, '' ORDER BY days.night) AS codes
+      FROM ids CROSS JOIN days LEFT JOIN picked pk ON pk.project_id = ids.id AND pk.night = days.night
+      GROUP BY ids.id
+    )
+    SELECT c.project_id AS "projectId", c.codes, h.night::text AS "headNight", h.observed AS "headObserved",
+      n.status AS "headStatus", n.summary AS "headSummary", to_json(n.created_at) #>> '{}' AS "headCreatedAt",
+      n.evidence_hash AS "headEvidenceHash", n.attestation_uid AS "headAttestationUid"
+    FROM codes c
+    LEFT JOIN head h ON h.project_id = c.project_id
+    LEFT JOIN nights n ON n.project_id = h.project_id AND n.night = h.night AND n.observed = h.observed
+    ORDER BY c.project_id`);
+  type Raw = {
+    projectId: number; codes: string | null; headNight: string | null; headObserved: boolean | null;
+    headStatus: NightRow['status'] | null; headSummary: string | null; headCreatedAt: string | null;
+    headEvidenceHash: string | null; headAttestationUid: string | null;
+  };
+  return (res as unknown as { rows: Raw[] }).rows.map((r) => ({
+    projectId: Number(r.projectId),
+    codes: r.codes ?? '',
+    head: r.headNight && r.headStatus
+      ? {
+          night: r.headNight, observed: !!r.headObserved, status: r.headStatus, summary: r.headSummary,
+          createdAt: new Date(r.headCreatedAt ?? 0), evidenceHash: r.headEvidenceHash, attestationUid: r.headAttestationUid,
+        }
+      : null,
+  }));
+}
+
+/** Listed projects (as listListedProjects), only the columns the open API prints. */
+export async function listListedProjectCards(db: Db) {
+  return db
+    .select({ id: projects.id, slug: projects.slug, name: projects.name, tagline: projects.tagline, source: projects.source, bay: projects.bay })
+    .from(projects)
+    .where(and(eq(projects.hidden, false), sql`${projects.source} <> 'community'`))
+    .orderBy(asc(projects.id));
+}
+
+export interface LeanNightRow {
+  night: string; observed: boolean; status: NightRow['status']; reasons: unknown; summary: string | null;
+  evidenceHash: string | null; attestationUid: string | null; attestTx: string | null;
+}
+
+/** One project's nights in [from, to] with only the fields the open API prints (reasons, not the whole signals). */
+export async function getLeanNights(db: Db, projectId: number, from: string, to: string): Promise<LeanNightRow[]> {
   return db
     .select({
-      projectId: nights.projectId, night: nights.night, status: nights.status, observed: nights.observed,
-      summary: nights.summary, createdAt: nights.createdAt, evidenceHash: nights.evidenceHash,
-      attestationUid: nights.attestationUid,
+      night: nights.night, observed: nights.observed, status: nights.status,
+      reasons: sql<unknown>`${nights.signals} -> 'reasons'`, summary: nights.summary,
+      evidenceHash: nights.evidenceHash, attestationUid: nights.attestationUid, attestTx: nights.attestTx,
     })
     .from(nights)
-    .where(and(inArray(nights.projectId, ids), gte(nights.night, from)))
+    .where(and(eq(nights.projectId, projectId), gte(nights.night, from), lte(nights.night, to)))
     .orderBy(asc(nights.night), asc(nights.observed));
 }
 

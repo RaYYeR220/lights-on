@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { getTowerData, type TowerData } from "@/lib/views/tower";
+import { cached } from "@/lib/apiCache";
 import { HeroCtas } from "@/components/bags/HeroCtas";
 import { Tower } from "@/components/tower/Tower";
 import { TowerPrePaint } from "@/components/tower/PrePaint";
@@ -11,7 +12,8 @@ export const revalidate = 300;
 
 async function loadTower(): Promise<TowerData | null> {
   try {
-    return await getTowerData(await getDb());
+    // shared with the share image; at most one tower read per instance per 2 min
+    return await cached("tower", async () => getTowerData(await getDb()));
   } catch (e) {
     console.error("landing: tower data unavailable:", e instanceof Error ? e.message : e);
     return null;

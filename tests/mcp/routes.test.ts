@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { resetApiCache } from '@/lib/apiCache';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import path from 'node:path';
 import { getDb } from '@/lib/db';
@@ -26,6 +27,7 @@ beforeAll(async () => {
   const today = new Date().toISOString().slice(0, 10);
   await insertNight(db, { projectId: p.id, night: today, status: 'shipped', observed: true, signals: { reasons: ['repo.release'] }, attestationUid: '0xuid' });
 });
+beforeEach(() => resetApiCache());
 afterAll(() => { process.env = { ...saved }; });
 
 const body = async (r: Response) => JSON.parse(await r.text());

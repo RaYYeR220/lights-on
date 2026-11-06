@@ -2,9 +2,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createMcpHandler } from 'mcp-handler';
 import { z } from 'zod';
 import { getDb } from '@/lib/db';
+import { cachedRead } from '@/lib/apiCache';
 import { safeErrorCode } from '@/lib/net/redact';
 import {
-  ToolError, getBriefing, getNight, getProject, isStillShipping, listProjects, watchInput, watchProject,
+  HISTORY_LEGEND, ToolError, getBriefing, getNight, getProject, isStillShipping, listProjects, watchInput, watchProject,
 } from '@/lib/mcp/tools';
 
 export const runtime = 'nodejs';
@@ -36,31 +37,31 @@ const handler = createMcpHandler(
   (server) => {
     server.registerTool('list_projects', {
       title: 'List projects',
-      description: 'Every watched project with its latest nightly status, 30-night record and bay. Set history for 90 daily statuses.',
-      inputSchema: z.object({ history: z.boolean().optional().describe('Include the last 90 nights of statuses, oldest first') }),
+      description: 'Every watched project with its latest nightly status, 30-night record and bay. Set history for the last 90 nights as a 90-letter string.',
+      inputSchema: z.object({ history: z.boolean().optional().describe(`Include the last 90 nights as a 90-letter string, oldest first, last = today: ${HISTORY_LEGEND}`) }),
       annotations: READ_ONLY,
-    }, ({ history }) => run(async () => listProjects(await getDb(), { history: !!history })));
+    }, ({ history }, ctx) => run(() => cachedRead(`list:${history ? 'history' : 'plain'}`, headersOf(ctx), async () => listProjects(await getDb(), { history: !!history }))));
 
     server.registerTool('get_project', {
       title: 'Get project',
       description: 'One project: details, 30-night record, latest night with reasons and attestation, Vibestarter tranche summary.',
       inputSchema: z.object({ slug }),
       annotations: READ_ONLY,
-    }, ({ slug: s }) => run(async () => getProject(await getDb(), s)));
+    }, ({ slug: s }, ctx) => run(() => cachedRead(`project:${s}`, headersOf(ctx), async () => getProject(await getDb(), s))));
 
     server.registerTool('get_night', {
       title: 'Get night',
       description: 'One project-night (yyyymmdd): status, reasons, summary, evidence hash and EAS attestation uid.',
       inputSchema: z.object({ slug, night: z.number().int().describe('UTC date as yyyymmdd, e.g. 20261105') }),
       annotations: READ_ONLY,
-    }, ({ slug: s, night }) => run(async () => getNight(await getDb(), s, night)));
+    }, ({ slug: s, night }, ctx) => run(() => cachedRead(`night:${s}:${night}`, headersOf(ctx), async () => getNight(await getDb(), s, night))));
 
     server.registerTool('is_still_shipping', {
       title: 'Is this team still shipping?',
       description: 'Short answer for one project: latest status, streak, lit nights in the last 30, last ship, and the EAS attestation that backs it.',
       inputSchema: z.object({ slug }),
       annotations: READ_ONLY,
-    }, ({ slug: s }) => run(async () => isStillShipping(await getDb(), s)));
+    }, ({ slug: s }, ctx) => run(() => cachedRead(`shipping:${s}`, headersOf(ctx), async () => isStillShipping(await getDb(), s))));
 
     server.registerTool('get_briefing', {
       title: 'Backer briefing',

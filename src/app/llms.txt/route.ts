@@ -26,7 +26,7 @@ ${RULES_TEXT.map((r, i) => `${i + 1}. ${r}`).join('\n')}
   Tools: list_projects, get_project, get_night, is_still_shipping, get_briefing, watch_project.
   Start with is_still_shipping { "slug": "revoke-cash" }.
 - REST (JSON, CORS open, cached 5 minutes), spec at ${site}/api/openapi.json:
-  - GET ${site}/api/v1/projects?with=lastNight,history
+  - GET ${site}/api/v1/projects?with=lastNight,history   history = the last 90 nights as a 90-letter string, oldest first: S shipped, B building, Q quiet, D down, U unavailable, . no night
   - GET ${site}/api/v1/projects/{slug}
   - GET ${site}/api/v1/projects/{slug}/nights?from=yyyymmdd&to=yyyymmdd
   - GET ${site}/api/v1/evidence/{hash}   the canonical evidence bundle for a night
