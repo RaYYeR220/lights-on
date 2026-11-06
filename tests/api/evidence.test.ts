@@ -3,7 +3,7 @@ import path from 'node:path';
 import { keccak256, toBytes } from 'viem';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { getDb } from '@/lib/db';
-import { saveEvidence, upsertProject } from '@/lib/db/queries';
+import { saveEvidence, setProjectHidden, upsertProject } from '@/lib/db/queries';
 import { hashEvidence } from '@/lib/shift/evidence';
 import { GET } from '@/app/api/v1/evidence/[hash]/route';
 import type { EvidenceBundle } from '@/lib/types';
@@ -44,6 +44,28 @@ describe('GET /api/v1/evidence/[hash]', () => {
     expect(keccak256(toBytes(text))).toBe(hash);
     // upper-case hex in the URL finds the same row
     expect((await call(hash.toUpperCase().replace('0X', '0x'))).status).toBe(200);
+  });
+
+  it("a hidden (moderated) project's bundle is not served; an unlisted community one still is", async () => {
+    const db = await getDb();
+    const mk = (slug: string) => ({
+      v: 1, rulesVersion: 'r1', project: slug, night: 20261106, kind: 'nightly',
+      window: { start: '2026-11-05T05:00:00.000Z', end: '2026-11-06T05:00:00.000Z' },
+      sources: { repo: null, liveapp: null, chain: null, vibestarter: null },
+    } as unknown as EvidenceBundle);
+    const hidden = await upsertProject(db, { slug: 'ev-hidden', name: 'H', source: 'base' });
+    await setProjectHidden(db, hidden.id, true);
+    const community = await upsertProject(db, { slug: 'ev-community', name: 'C', source: 'community' });
+    const hb = mk('ev-hidden');
+    const cb = mk('ev-community');
+    await saveEvidence(db, hashEvidence(hb), hidden.id, '2026-11-06', hb);
+    await saveEvidence(db, hashEvidence(cb), community.id, '2026-11-06', cb);
+
+    const h = await call(hashEvidence(hb));
+    expect(h.status).toBe(404);
+    expect(await h.json()).toEqual({ error: 'not_found' });
+    expect(h.headers.get('cache-control')).not.toContain('immutable');
+    expect((await call(hashEvidence(cb))).status).toBe(200);
   });
 
   it('400 on a malformed hash, 404 when missing', async () => {

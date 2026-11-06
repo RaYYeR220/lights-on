@@ -1,5 +1,5 @@
 import { getDb } from '@/lib/db';
-import { getEvidence } from '@/lib/db/queries';
+import { getPublicEvidence } from '@/lib/db/queries';
 import { json } from '@/lib/net/http';
 import { safeErrorCode } from '@/lib/net/redact';
 import { canonicalize } from '@/lib/shift/evidence';
@@ -13,7 +13,8 @@ const HASH = /^0x[0-9a-fA-F]{64}$/;
 
 /**
  * The stored evidence bundle, byte for byte as it was hashed: the body is canonical JSON, so
- * keccak256(body) equals the hash in the URL. Content-addressed, so it never changes.
+ * keccak256(body) equals the hash in the URL. Content-addressed, so it never changes. A hidden (moderated) project's
+ * bundle is a 404; an unlisted community project's is served.
  */
 export async function GET(req: Request, ctx: { params: Promise<{ hash: string }> }): Promise<Response> {
   const hash = (await ctx.params).hash ?? '';
@@ -23,7 +24,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ hash: string }>
   try {
     const key = hash.toLowerCase();
     const bundle = await cachedRead(`evidence:${key}`, req.headers, async () => {
-      const b = await getEvidence(await getDb(), key);
+      const b = await getPublicEvidence(await getDb(), key); // a hidden project's bundle reads as missing
       if (!b) throw new ToolError('not_found', 404); // never cached: the bundle may be written a moment later
       return b;
     }).catch((e) => {

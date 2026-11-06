@@ -132,6 +132,20 @@ export async function getEvidence(db: Db, hash: string): Promise<EvidenceBundle 
   return row?.bundle ?? null;
 }
 
+/**
+ * The bundle the public evidence route may serve: null when missing or when its project is hidden (moderated).
+ * Unlisted community projects are served — unlisted keeps them off the listings, it does not make them private.
+ */
+export async function getPublicEvidence(db: Db, hash: string): Promise<EvidenceBundle | null> {
+  const [row] = await db
+    .select({ bundle: evidence.bundle })
+    .from(evidence)
+    .innerJoin(projects, eq(projects.id, evidence.projectId))
+    .where(and(eq(evidence.hash, hash), eq(projects.hidden, false)))
+    .limit(1);
+  return row?.bundle ?? null;
+}
+
 /** Content-addressed like evidence: first write wins. Keys are stored lowercase. */
 export async function saveNightManifest(db: Db, hash: string, night: string, root: string, body: NightManifest | Record<string, unknown>): Promise<void> {
   await db.insert(nightManifests).values({ hash: hash.toLowerCase(), night, root: root.toLowerCase(), body: body as NightManifest }).onConflictDoNothing();
