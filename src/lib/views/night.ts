@@ -85,7 +85,7 @@ const iso = (v: Date | string | null) => (v ? new Date(v).toISOString() : null);
 
 function view(raw: Raw[]): Pick<NightView, 'rows' | 'counts'> {
   const rows = raw
-    .filter((r) => !r.hidden)
+    .filter((r) => !r.hidden && r.source !== 'community') // unlisted projects stay off the shift page
     .map((r) => ({
       slug: r.slug,
       name: r.name,

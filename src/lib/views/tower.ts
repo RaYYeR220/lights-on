@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Db } from '@/lib/db';
 import { projects, type ProjectRow } from '@/lib/db/schema';
 import { computeRecord } from '@/lib/shift/rules';
@@ -108,7 +108,8 @@ export async function getTowerData(db: Db, opts: { now?: Date } = {}): Promise<T
 
   const [projRows, res] = await Promise.all([
     // every column, so a future `bay` column is picked up without a change here
-    db.select().from(projects).where(eq(projects.hidden, false)),
+    // listed projects only: hidden and community-added (unlisted, unverified) projects stay off the building
+    db.select().from(projects).where(and(eq(projects.hidden, false), ne(projects.source, 'community'))),
     db.execute(sql`
       SELECT x.project_id AS "projectId", x.night::text AS night, x.status, x.observed, x.attested,
         CASE WHEN x.latest THEN x.summary END AS summary,

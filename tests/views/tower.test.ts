@@ -125,13 +125,23 @@ describe('getTowerData', () => {
     expect(d.night).toBeNull();
   });
 
-  it('orders windows by source, then name', async () => {
+  it('a community-added project never appears on the building, even when unhidden with nights', async () => {
+    const listed = await proj('listed');
+    const c = await proj('added-by-someone', { source: 'community' });
+    await night(listed.id, back(0), 'quiet', true);
+    await night(c.id, back(0), 'shipped', true);
+    const d = await getTowerData(db, { now: NOW });
+    expect(d.projects.map((x) => x.slug)).toEqual(['listed']);
+    expect(d.shippedOnNight).toBe(0);
+  });
+
+  it('orders windows by their stored bay (creation order); source/name only break ties', async () => {
     await proj('zed', { name: 'Zed', source: 'base' });
     await proj('alpha', { name: 'alpha', source: 'vibeathon01' });
     await proj('beta', { name: 'Beta', source: 'base' });
     await proj('aave', { name: 'aave', source: 'base' });
     const d = await getTowerData(db, { now: NOW });
-    expect(d.projects.map((x) => x.slug)).toEqual(['aave', 'beta', 'zed', 'alpha']);
+    expect(d.projects.map((x) => x.slug)).toEqual(['zed', 'alpha', 'beta', 'aave']);
   });
 
   it('whatShipped: notable first, then real commit subjects; never for quiet nights', async () => {
