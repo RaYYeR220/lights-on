@@ -1,6 +1,6 @@
 # Review in 5 minutes
 
-Everything below runs in a browser with no wallet, account or funds. Site: **https://lights-on-watch.vercel.app**
+Everything below runs in a browser with no wallet, account or funds. Site: **https://lights-on-watch.vercel.app** · Demo video (2:17): https://youtu.be/d783TR7uVwA
 
 1. **Open the site.** https://lights-on-watch.vercel.app
    Each window in the building is a watched project, lit by last night's status. The line under the buttons names the night, whether it was attested on Base, and how many projects shipped.

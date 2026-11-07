@@ -6,7 +6,7 @@
 
 Basis: <!-- num:headline.basis -->reconstructed history (git + Wayback), not attested<!-- /num -->, nights <!-- num:headline.window30From -->2026-10-08<!-- /num --> to <!-- num:headline.latestNight -->2026-11-06<!-- /num -->. Only projects with a usable 30-night window are counted. For comparison, <!-- num:field.reference.active30 -->8<!-- /num --> of <!-- num:field.reference.withHistory -->8<!-- /num --> large reference apps (Uniswap Interface, Aave Interface, Safe{Wallet} and others) showed activity in the same window. "No detected activity" means nothing seen in public repos, the live app or listed contracts. It does not mean a team has stopped; see [Honest limits](#honest-limits) and [CLAIMS.md](CLAIMS.md).
 
-Live: **https://lights-on-watch.vercel.app** · Review path: [JUDGES.md](JUDGES.md) · Onchain proof: [PROOF.md](PROOF.md)
+Live: **https://lights-on-watch.vercel.app** · Demo video (2:17): https://youtu.be/d783TR7uVwA · Review path: [JUDGES.md](JUDGES.md) · Onchain proof: [PROOF.md](PROOF.md)
 
 ## The morning question
 

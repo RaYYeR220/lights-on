@@ -23,7 +23,7 @@ Lights On was built with AI coding agents. This page says which agents, how they
 
 | | |
 |---|---|
-| Commits | 103 (`git rev-list --count HEAD`) |
+| Commits | 108 (`git rev-list --count HEAD`) |
 | Test files | 40: 36 Vitest files (unit and integration; Postgres runs in memory via pglite), 3 Playwright specs, 1 fork suite |
 | Test cases | ≈475 Vitest, ≈36 Playwright, ≈7 fork. Counted from `it(` / `test(` call sites, so table-driven `.each` cases expand further at run time |
 | Source | ≈14,000 lines of TypeScript in `src/`, ≈7,000 in `tests/` |
